@@ -1,0 +1,439 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { djangoClient } from '@/lib/django-client';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Store,
+  ArrowLeftRight,
+  ShoppingCart,
+  Search,
+  X,
+  Check,
+  Loader2,
+} from 'lucide-react';
+import { toast } from 'sonner';
+
+export interface TransferCartItem {
+  id: number;
+  name: string;
+  reference: string;
+  quantity: number;
+  maxQuantity: number;
+}
+
+export interface TransferStore {
+  magasin_id: number;
+  shop_name: string;
+  shop_logo?: string | null;
+}
+
+interface TransferProductsDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  sourceStore: TransferStore | null;
+  stores: TransferStore[];
+  initialCart?: TransferCartItem[];
+  onSuccess?: () => void;
+}
+
+export function TransferProductsDialog({
+  open,
+  onOpenChange,
+  sourceStore,
+  stores,
+  initialCart = [],
+  onSuccess,
+}: TransferProductsDialogProps) {
+  const [destinationStoreId, setDestinationStoreId] = useState<number | ''>('');
+  const [destinationSearchTerm, setDestinationSearchTerm] = useState('');
+  const [sourceProducts, setSourceProducts] = useState<any[]>([]);
+  const [productSearchTerm, setProductSearchTerm] = useState('');
+  const [transferCart, setTransferCart] = useState<TransferCartItem[]>([]);
+  const [productQtyInputs, setProductQtyInputs] = useState<Record<number, number>>({});
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [submittingTransfer, setSubmittingTransfer] = useState(false);
+  const initialCartRef = useRef(initialCart);
+  initialCartRef.current = initialCart;
+
+  const resetState = () => {
+    setDestinationStoreId('');
+    setDestinationSearchTerm('');
+    setProductSearchTerm('');
+    setSourceProducts([]);
+    setTransferCart([]);
+    setProductQtyInputs({});
+  };
+
+  const handleOpenChange = (next: boolean) => {
+    onOpenChange(next);
+    if (!next) resetState();
+  };
+
+  useEffect(() => {
+    if (!open || !sourceStore?.magasin_id) return;
+    const cart = initialCartRef.current;
+    setTransferCart(cart);
+    setProductQtyInputs(
+      cart.reduce<Record<number, number>>((acc, item) => {
+        acc[item.id] = item.quantity;
+        return acc;
+      }, {}),
+    );
+  }, [open, sourceStore?.magasin_id]);
+
+  useEffect(() => {
+    const magasinId = sourceStore?.magasin_id;
+    if (!open || !magasinId) {
+      setSourceProducts([]);
+      return;
+    }
+    const fetchProducts = async () => {
+      setLoadingProducts(true);
+      try {
+        const products = await djangoClient.products.list({ magasin_id: magasinId });
+        setSourceProducts(
+          products.filter((p) => Number(p.magasin) === Number(magasinId)),
+        );
+      } catch (err) {
+        console.error('Failed to load source products', err);
+        toast.error('Erreur de chargement des produits');
+      } finally {
+        setLoadingProducts(false);
+      }
+    };
+    fetchProducts();
+  }, [open, sourceStore?.magasin_id]);
+
+  const getProductQtyInput = (product: any) => {
+    const stock = Number(product.initial_quantity ?? 0);
+    const raw = productQtyInputs[product.id] ?? 1;
+    return Math.min(Math.max(1, raw), Math.max(stock, 1));
+  };
+
+  const setProductQtyInput = (productId: number, value: number, max: number) => {
+    const clamped = Math.min(Math.max(1, value), Math.max(max, 1));
+    setProductQtyInputs((prev) => ({ ...prev, [productId]: clamped }));
+  };
+
+  const addToTransferCart = (product: any) => {
+    const stock = Number(product.initial_quantity ?? 0);
+    if (stock <= 0) {
+      toast.error(`${product.name} : stock insuffisant`);
+      return;
+    }
+    if (transferCart.some((item) => item.id === product.id)) {
+      toast.info(`${product.name} est déjà dans le panier`);
+      return;
+    }
+    const quantity = getProductQtyInput(product);
+    setTransferCart((prev) => [
+      ...prev,
+      {
+        id: product.id,
+        name: product.name,
+        reference: product.reference,
+        quantity,
+        maxQuantity: stock,
+      },
+    ]);
+    toast.success(`${quantity} × ${product.name} ajouté au panier`);
+  };
+
+  const removeFromTransferCart = (productId: number) => {
+    setTransferCart((prev) => prev.filter((item) => item.id !== productId));
+  };
+
+  const updateTransferCartQuantity = (productId: number, value: number) => {
+    setTransferCart((prev) =>
+      prev.map((item) =>
+        item.id === productId
+          ? { ...item, quantity: Math.min(Math.max(1, value), item.maxQuantity) }
+          : item,
+      ),
+    );
+  };
+
+  const transferCartTotalQty = transferCart.reduce((sum, item) => sum + item.quantity, 0);
+
+  const filteredSourceProducts = sourceProducts.filter(
+    (p) =>
+      p.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
+      p.reference?.toLowerCase().includes(productSearchTerm.toLowerCase()),
+  );
+
+  const destinationStores = stores.filter(
+    (s) =>
+      s.magasin_id !== sourceStore?.magasin_id &&
+      s.shop_name.toLowerCase().includes(destinationSearchTerm.toLowerCase()),
+  );
+
+  const selectedDestinationStore = stores.find((s) => s.magasin_id === destinationStoreId);
+
+  const handleTransferSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sourceStore || !destinationStoreId || transferCart.length === 0) {
+      toast.error('Sélectionnez des produits et un magasin de destination');
+      return;
+    }
+    setSubmittingTransfer(true);
+    try {
+      await djangoClient.transfers.transfer(
+        sourceStore.magasin_id,
+        destinationStoreId as number,
+        transferCart.map((p) => ({ product_id: p.id, quantity: p.quantity })),
+      );
+      toast.success('Transfert effectué');
+      handleOpenChange(false);
+      onSuccess?.();
+    } catch (err) {
+      console.error(err);
+      toast.error('Erreur lors du transfert');
+    } finally {
+      setSubmittingTransfer(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Transfert de produits</DialogTitle>
+          <DialogDescription>
+            Depuis{' '}
+            <span className="font-medium text-foreground">{sourceStore?.shop_name}</span> —
+            sélectionnez des produits et choisissez le magasin de destination.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleTransferSubmit} className="flex flex-col gap-4 min-h-0 flex-1">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0 flex-1">
+            <div className="flex flex-col border rounded-lg min-h-0">
+              <div className="p-3 border-b space-y-2">
+                <Label>Produits du magasin</Label>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Rechercher un produit..."
+                    value={productSearchTerm}
+                    onChange={(e) => setProductSearchTerm(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+              </div>
+              <ScrollArea className="h-64 lg:h-72">
+                {loadingProducts ? (
+                  <div className="flex items-center justify-center h-32 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                    Chargement...
+                  </div>
+                ) : filteredSourceProducts.length === 0 ? (
+                  <p className="p-4 text-sm text-muted-foreground text-center">
+                    {sourceProducts.length === 0 ? 'Aucun produit dans ce magasin' : 'Aucun résultat'}
+                  </p>
+                ) : (
+                  <div className="p-2 space-y-1">
+                    {filteredSourceProducts.map((product) => {
+                      const inCart = transferCart.some((item) => item.id === product.id);
+                      const stock = Number(product.initial_quantity ?? 0);
+                      const qty = getProductQtyInput(product);
+                      return (
+                        <div
+                          key={product.id}
+                          className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 hover:bg-muted/50"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium truncate">{product.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {product.reference} · Stock : {stock}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={stock}
+                              value={qty}
+                              disabled={inCart || stock <= 0}
+                              onChange={(e) =>
+                                setProductQtyInput(product.id, Number(e.target.value), stock)
+                              }
+                              className="w-16 h-8 text-center px-1"
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={inCart ? 'secondary' : 'outline'}
+                              disabled={inCart || stock <= 0}
+                              onClick={() => addToTransferCart(product)}
+                            >
+                              {inCart ? (
+                                <>
+                                  <Check className="h-3.5 w-3.5 mr-1" />
+                                  Sélectionné
+                                </>
+                              ) : (
+                                'Sélectionner'
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
+
+            <div className="flex flex-col gap-4 min-h-0">
+              <div className="flex flex-col border rounded-lg flex-1 min-h-0">
+                <div className="p-3 border-b flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ShoppingCart className="h-4 w-4" />
+                    <Label>Panier de transfert</Label>
+                  </div>
+                  <Badge variant="secondary">{transferCartTotalQty} unité(s)</Badge>
+                </div>
+                <ScrollArea className="h-40">
+                  {transferCart.length === 0 ? (
+                    <p className="p-4 text-sm text-muted-foreground text-center">
+                      Aucun produit sélectionné
+                    </p>
+                  ) : (
+                    <div className="p-2 space-y-1">
+                      {transferCart.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium truncate">{item.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.reference} · max {item.maxQuantity}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={item.maxQuantity}
+                              value={item.quantity}
+                              onChange={(e) =>
+                                updateTransferCartQuantity(item.id, Number(e.target.value))
+                              }
+                              className="w-16 h-8 text-center px-1"
+                            />
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              onClick={() => removeFromTransferCart(item.id)}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+              </div>
+
+              <div className="flex flex-col border rounded-lg">
+                <div className="p-3 border-b space-y-2">
+                  <Label>Magasin de destination</Label>
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Rechercher un magasin..."
+                      value={destinationSearchTerm}
+                      onChange={(e) => setDestinationSearchTerm(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+                  {selectedDestinationStore && (
+                    <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
+                      <Store className="h-4 w-4 text-primary shrink-0" />
+                      <span className="text-sm font-medium">{selectedDestinationStore.shop_name}</span>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-6 w-6 ml-auto shrink-0"
+                        onClick={() => setDestinationStoreId('')}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <ScrollArea className="h-28">
+                  <div className="p-2 space-y-1">
+                    {destinationStores.length === 0 ? (
+                      <p className="p-2 text-sm text-muted-foreground text-center">
+                        Aucun magasin trouvé
+                      </p>
+                    ) : (
+                      destinationStores.map((store) => (
+                        <button
+                          key={store.magasin_id}
+                          type="button"
+                          onClick={() => setDestinationStoreId(store.magasin_id)}
+                          className={`w-full flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 ${
+                            destinationStoreId === store.magasin_id
+                              ? 'bg-primary/10 border border-primary/30 font-medium'
+                              : 'border border-transparent'
+                          }`}
+                        >
+                          {store.shop_logo ? (
+                            <img src={store.shop_logo} alt="" className="h-5 w-5 rounded-full object-cover" />
+                          ) : (
+                            <Store className="h-4 w-4 text-muted-foreground shrink-0" />
+                          )}
+                          {store.shop_name}
+                          {destinationStoreId === store.magasin_id && (
+                            <Check className="h-4 w-4 ml-auto text-primary shrink-0" />
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
+            </div>
+          </div>
+
+          <Button
+            type="submit"
+            disabled={submittingTransfer || transferCart.length === 0 || !destinationStoreId}
+            className="w-full"
+          >
+            {submittingTransfer ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Transfert en cours...
+              </>
+            ) : (
+              <>
+                <ArrowLeftRight className="mr-2 h-4 w-4" />
+                Transférer {transferCartTotalQty > 0 ? `${transferCartTotalQty} unité(s)` : ''}
+              </>
+            )}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
