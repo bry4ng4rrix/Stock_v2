@@ -1,0 +1,47 @@
+name: Deploy Stock_v2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add host
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy on server
+        run: |
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
+            cd /home/garrix/Stock_v2
+
+            echo "Updating repository..."
+            git pull origin main
+
+            echo "Building images..."
+            docker compose build
+
+            echo "Stopping old containers..."
+            docker compose down
+
+            echo "Starting containers..."
+            docker compose up -d
+
+            echo "Running migrations..."
+            docker compose exec -T backend python manage.py migrate
+
+            echo "Collecting static files..."
+            docker compose exec -T backend python manage.py collectstatic --noinput || true
+
+            echo "Deployment completed."
+          EOF
