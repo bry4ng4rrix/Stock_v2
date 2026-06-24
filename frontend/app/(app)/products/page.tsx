@@ -220,10 +220,12 @@ export default function ProductsPage() {
 
   const filteredProducts = products.filter(p => {
     const status = getStatus(p);
-    const matchSearch = (p.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (p.reference || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (p.brand || '').toLowerCase().includes(searchTerm.toLowerCase());
-    const matchCat = selectedCategory === 'all' || p.category === selectedCategory;
+    const term = searchTerm.toLowerCase();
+    const matchSearch = (p.name || '').toLowerCase().includes(term) ||
+      (p.reference || '').toLowerCase().includes(term) ||
+      (p.brand || '').toLowerCase().includes(term) ||
+      (p.description || '').toLowerCase().includes(term);
+    const matchCat = selectedCategory === 'all' || (p.category || '').toLowerCase().trim() === selectedCategory.toLowerCase().trim();
     const matchStatus = selectedStatus === 'all' || status === selectedStatus;
     return matchSearch && matchCat && matchStatus;
   });
