@@ -1461,6 +1461,13 @@ function ProductForm({ form, setForm, isAdmin, stores = [], storesLoading = fals
     set('initial_quantity', String(updated.reduce((s, v) => s + v.quantity, 0)));
   };
 
+  const updateVariantQty = (idx: number, qty: number) => {
+    if (qty < 0) return;
+    const updated = variants.map((v, i) => i === idx ? { ...v, quantity: qty } : v);
+    set('variants', updated);
+    set('initial_quantity', String(updated.reduce((s, v) => s + v.quantity, 0)));
+  };
+
   const dataURLtoFile = (dataUrl: string, filename: string) => {
     const arr = dataUrl.split(',');
     const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
@@ -1648,9 +1655,16 @@ function ProductForm({ form, setForm, isAdmin, stores = [], storesLoading = fals
             {variants.map((v, idx) => (
               <span
                 key={idx}
-                className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-slate-100 dark:bg-slate-800 dark:border-slate-600 px-3 py-1 text-xs font-medium text-slate-700 dark:text-slate-200"
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-slate-100 dark:bg-slate-800 dark:border-slate-600 px-2 py-1 text-xs font-medium text-slate-700 dark:text-slate-200"
               >
-                <span className="font-semibold">{v.quantity}</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={v.quantity}
+                  onChange={e => updateVariantQty(idx, Number(e.target.value) || 0)}
+                  className="w-10 rounded border border-slate-300 bg-white dark:bg-slate-700 dark:border-slate-500 text-center text-xs font-bold text-slate-900 dark:text-white px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  aria-label="Quantité"
+                />
                 {v.size && <span className="uppercase">{v.size}</span>}
                 {v.color && <span className="text-muted-foreground">{v.color}</span>}
                 <button
