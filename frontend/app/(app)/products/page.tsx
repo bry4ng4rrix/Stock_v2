@@ -37,7 +37,7 @@ const MEDIA_BASE = (process.env.NEXT_PUBLIC_DJANGO_API_URL || 'http://157.173.10
   .replace('/api', '');
 
 const CATEGORIES = [
-  'Sweet', 'Abaya ','Chaussure', 'Veste', 'Cheveux', 'Chemise', 'Tee shirt', 'Short', 'Ceinture', 'Pantalon', 'Jupe', 'Robe', 'Sac', 'Produit Cosmetique',
+  'Sweet', 'Abaya ','body','Ensemble ','Ensemble Pantalon','Chaussure', 'Veste', 'Cheveux', 'Chemise', 'Tee shirt', 'Short', 'Ceinture', 'Pantalon', 'Jupe', 'Robe', 'Sac', 'Produit Cosmetique',
   'Sandale', 'Claquette', 'Alimentaire', 'Parfum', 'Accessoire', 'Autre'
 ];
 
