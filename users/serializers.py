@@ -161,6 +161,7 @@ class MovementSerializer(serializers.ModelSerializer):
             "product",
             "product_name",
             "product_reference",
+            "variant_label",
             "magasin",
             "magasin_name",
             "changed_by",

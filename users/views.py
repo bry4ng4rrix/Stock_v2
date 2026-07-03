@@ -19,6 +19,12 @@ from .authentication import CustomTokenObtainPairSerializer
 from .models import Notification
 
 
+def _variant_label(size, color):
+    """Build a human-readable label ('Taille/Couleur') for a product variant."""
+    parts = [str(p).strip() for p in [size, color] if p and str(p).strip()]
+    return '/'.join(parts) if parts else None
+
+
 def _auto_generate_qr(product):
     """Generate and save a QR code image for a product if it has none."""
     try:
@@ -610,6 +616,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             else:
                 total_qty = variants_sum
             product = serializer.save(magasin=magasin, initial_quantity=total_qty)
+            created_variant_labels = []
             for v in variants_data:
                 qty = int(v.get('quantity', 0))
                 if qty > 0:
@@ -619,12 +626,18 @@ class ProductViewSet(viewsets.ModelViewSet):
                         color=v.get('color', '') or '',
                         quantity=qty,
                     )
+                    label = _variant_label(v.get('size'), v.get('color'))
+                    if label:
+                        created_variant_labels.append(label)
+            variant_label = ', '.join(created_variant_labels) or None
         else:
             product = serializer.save(magasin=magasin)
+            variant_label = None
 
         Movement.objects.create(
             product=product,
             product_name=product.name,
+            variant_label=variant_label,
             magasin=magasin,
             changed_by=user,
             previous_quantity=0,
@@ -665,6 +678,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             response = super().update(request, *args, **kwargs)
             new_instance = self.get_object()
 
+            updated_variant_labels = []
             if variants_data is not None:
                 new_instance.variants.all().delete()
                 total_qty = 0
@@ -678,6 +692,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                             quantity=qty,
                         )
                         total_qty += qty
+                        label = _variant_label(v.get('size'), v.get('color'))
+                        if label:
+                            updated_variant_labels.append(label)
                 if variants_data:
                     new_instance.initial_quantity = total_qty
                     new_instance.save(update_fields=['initial_quantity'])
@@ -687,6 +704,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             movement_data = {
                 'product': new_instance,
                 'product_name': new_instance.name,
+                'variant_label': ', '.join(updated_variant_labels) or None,
                 'magasin': new_instance.magasin,
                 'changed_by': user,
                 'previous_quantity': old_qty,
@@ -696,6 +714,8 @@ class ProductViewSet(viewsets.ModelViewSet):
 
             if 'initial_quantity' in request.data and new_qty != old_qty:
                 changed_fields.append(f"stock {new_qty - old_qty:+d}")
+            if variants_data is not None and updated_variant_labels:
+                changed_fields.append(f"variantes: {', '.join(updated_variant_labels)}")
             if 'unit_price' in request.data and float(new_instance.unit_price) != float(old_unit_price):
                 movement_data['previous_unit_price'] = old_unit_price
                 movement_data['new_unit_price'] = new_instance.unit_price

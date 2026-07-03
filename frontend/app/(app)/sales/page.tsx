@@ -51,6 +51,7 @@ import {
   Loader2,
   AlertTriangle,
   Download,
+  Trash2,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -122,6 +123,11 @@ export default function SalesPage() {
   // Dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Delete
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingSale, setDeletingSale] = useState<Sale | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [selectedStoreId, setSelectedStoreId] = useState<number | ''>('');
   const [storeSearch, setStoreSearch] = useState('');
 
@@ -485,6 +491,28 @@ export default function SalesPage() {
       );
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Delete sale
+  const handleDeleteSale = async () => {
+    if (!deletingSale) return;
+
+    setDeleteLoading(true);
+
+    try {
+      await djangoClient.sales.delete(deletingSale.id);
+
+      toast.success('Vente supprimée');
+
+      setDeleteDialogOpen(false);
+      setDeletingSale(null);
+
+      setSales((prev) => prev.filter((s) => s.id !== deletingSale.id));
+    } catch (error: any) {
+      toast.error(error?.message || 'Erreur lors de la suppression de la vente');
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -1316,6 +1344,10 @@ export default function SalesPage() {
                     {isManager && (
                       <TableHead>Magasin</TableHead>
                     )}
+
+                    {isAdmin && (
+                      <TableHead className="text-right">Actions</TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
 
@@ -1380,6 +1412,21 @@ export default function SalesPage() {
                           </Badge>
                         </TableCell>
                       )}
+
+                      {isAdmin && (
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setDeletingSale(sale);
+                              setDeleteDialogOpen(true);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1388,6 +1435,44 @@ export default function SalesPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Delete Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          setDeleteDialogOpen(open);
+          if (!open) setDeletingSale(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Supprimer la vente</DialogTitle>
+            <DialogDescription>
+              Cette action est irréversible.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteDialogOpen(false)}
+            >
+              Annuler
+            </Button>
+
+            <Button
+              variant="destructive"
+              onClick={handleDeleteSale}
+              disabled={deleteLoading}
+            >
+              {deleteLoading && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Supprimer
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
