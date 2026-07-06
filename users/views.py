@@ -1,14 +1,22 @@
 import io
 import json
+import os
+import shutil
+import tempfile
+import zipfile
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser
 from django.db.models import Sum, F, DecimalField, Count, Value, Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
+from django.http import HttpResponse
+from django.conf import settings
+from django.core.management import call_command
 from datetime import timedelta
 
 from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification
@@ -1812,3 +1820,102 @@ class TransferProductsView(APIView):
             )
 
         return Response({"message": "Transfert effectué avec succès"})
+
+
+class BackupExportView(APIView):
+    """Export complet de la base de données (fixture JSON) + fichiers media (images, QR codes) dans un zip."""
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            data_buffer = io.StringIO()
+            call_command(
+                "dumpdata",
+                exclude=[
+                    "contenttypes",
+                    "auth.permission",
+                    "admin.logentry",
+                    "sessions.session",
+                ],
+                indent=2,
+                stdout=data_buffer,
+            )
+            zf.writestr("data.json", data_buffer.getvalue())
+
+            media_root = str(settings.MEDIA_ROOT)
+            if os.path.isdir(media_root):
+                for root, _dirs, files in os.walk(media_root):
+                    for filename in files:
+                        file_path = os.path.join(root, filename)
+                        arcname = os.path.join("media", os.path.relpath(file_path, media_root))
+                        zf.write(file_path, arcname)
+
+        buffer.seek(0)
+        filename = f"backup_{timezone.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+
+class BackupImportView(APIView):
+    """Restauration complète depuis un backup.zip : remplace toutes les données et les fichiers media."""
+    permission_classes = [IsAdmin]
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        uploaded = request.FILES.get("file")
+        if not uploaded:
+            return Response({"detail": "Aucun fichier fourni."}, status=status.HTTP_400_BAD_REQUEST)
+        if not uploaded.name.lower().endswith(".zip"):
+            return Response({"detail": "Le fichier doit être une archive .zip."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            zf = zipfile.ZipFile(uploaded)
+        except zipfile.BadZipFile:
+            return Response({"detail": "Fichier zip invalide."}, status=status.HTTP_400_BAD_REQUEST)
+
+        with zf:
+            names = zf.namelist()
+            if "data.json" not in names:
+                return Response(
+                    {"detail": "Archive invalide : data.json introuvable."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            data_content = zf.read("data.json")
+            try:
+                json.loads(data_content)
+            except json.JSONDecodeError:
+                return Response({"detail": "data.json invalide ou corrompu."}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                call_command("flush", interactive=False)
+
+                tmp_path = None
+                with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+                    tmp.write(data_content)
+                    tmp_path = tmp.name
+                try:
+                    call_command("loaddata", tmp_path)
+                finally:
+                    os.unlink(tmp_path)
+
+                media_root = str(settings.MEDIA_ROOT)
+                if os.path.isdir(media_root):
+                    shutil.rmtree(media_root)
+                os.makedirs(media_root, exist_ok=True)
+                for name in names:
+                    if name.startswith("media/") and not name.endswith("/"):
+                        rel_path = name[len("media/"):]
+                        target_path = os.path.join(media_root, rel_path)
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        with zf.open(name) as src, open(target_path, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+            except Exception as exc:
+                return Response(
+                    {"detail": f"Erreur lors de la restauration : {exc}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+        return Response({"detail": "Backup restauré avec succès."})

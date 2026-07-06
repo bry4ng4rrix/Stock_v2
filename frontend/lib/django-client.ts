@@ -255,6 +255,39 @@ class DjangoAPIClient {
     return this.requestFormData<T>(endpoint, 'PATCH', data)
   }
 
+  // ==================== Blob Methods (for file downloads) ====================
+  private async requestBlob(endpoint: string): Promise<{ blob: Blob; filename: string }> {
+    const url = `${API_BASE_URL}${endpoint}`
+    const headers: Record<string, string> = {}
+    if (this.tokens?.access) {
+      headers['Authorization'] = `Bearer ${this.tokens.access}`
+    }
+
+    let response = await fetch(url, { headers })
+
+    if (response.status === 401) {
+      const newToken = await this.refreshAccessToken()
+      if (!newToken) throw new Error('Authentication failed')
+      headers['Authorization'] = `Bearer ${newToken}`
+      response = await fetch(url, { headers })
+    }
+
+    if (!response.ok) {
+      let errorMsg = `API Error: ${response.status}`
+      try {
+        const error = await response.json()
+        errorMsg = error.detail || errorMsg
+      } catch {}
+      throw new Error(errorMsg)
+    }
+
+    const disposition = response.headers.get('content-disposition') || ''
+    const match = disposition.match(/filename="?([^"]+)"?/)
+    const filename = match ? match[1] : 'backup.zip'
+    const blob = await response.blob()
+    return { blob, filename }
+  }
+
   // ==================== Authentication Service ====================
   auth = {
     register: async (
@@ -581,6 +614,19 @@ class DjangoAPIClient {
 
     delete: async (id: number) => {
       return {}
+    },
+  }
+
+  // ==================== Backup Service (admin only) ====================
+  backup = {
+    export: async () => {
+      return this.requestBlob('/users/backup/export/')
+    },
+
+    import: async (file: File) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      return this.postFormData<{ detail: string }>('/users/backup/import/', fd)
     },
   }
 

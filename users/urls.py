@@ -27,6 +27,8 @@ from .views import (
     ChatUsersListView,
     ChatMessageHistoryView,
     TransferProductsView,
+    BackupExportView,
+    BackupImportView,
 )
 
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -74,6 +76,9 @@ urlpatterns = [
     path("pending/", PendingUsersView.as_view()),
     # Transfer products between stores
     path("transfer/products/", TransferProductsView.as_view()),
+    # Backup: export/import full database + media (admin only)
+    path("backup/export/", BackupExportView.as_view()),
+    path("backup/import/", BackupImportView.as_view()),
     # Delete user
     path("delete/<int:user_id>/", DeleteUserView.as_view()),
     # Reject user

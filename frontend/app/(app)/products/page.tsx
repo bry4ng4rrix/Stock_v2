@@ -44,6 +44,8 @@ import {
   ShoppingCart,
   ArrowLeftRight,
   Eye,
+  DatabaseBackup,
+  DatabaseZap,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -62,6 +64,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -211,6 +223,12 @@ export default function ProductsPage() {
   const [importMagasinId, setImportMagasinId] = useState("");
   const [importStoreFilter, setImportStoreFilter] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [backupExporting, setBackupExporting] = useState(false);
+  const [backupImporting, setBackupImporting] = useState(false);
+  const [backupConfirmOpen, setBackupConfirmOpen] = useState(false);
+  const [pendingBackupFile, setPendingBackupFile] = useState<File | null>(null);
+  const backupFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
@@ -679,6 +697,50 @@ export default function ProductsPage() {
     setTimeout(() => fileInputRef.current?.click(), 50);
   };
 
+  const handleBackupExport = async () => {
+    setBackupExporting(true);
+    try {
+      const { blob, filename } = await djangoClient.backup.export();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Backup téléchargé avec succès");
+    } catch (err: any) {
+      toast.error(err.message || "Erreur lors du téléchargement du backup");
+    } finally {
+      setBackupExporting(false);
+    }
+  };
+
+  const handleBackupFileSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setPendingBackupFile(file);
+    setBackupConfirmOpen(true);
+  };
+
+  const handleBackupImportConfirmed = async () => {
+    if (!pendingBackupFile) return;
+    setBackupImporting(true);
+    try {
+      await djangoClient.backup.import(pendingBackupFile);
+      toast.success("Backup restauré avec succès");
+      setBackupConfirmOpen(false);
+      setPendingBackupFile(null);
+      await fetchData();
+    } catch (err: any) {
+      toast.error(err.message || "Erreur lors de la restauration du backup");
+    } finally {
+      setBackupImporting(false);
+    }
+  };
+
   const handleAddProduct = async () => {
     if (!form.reference || !form.name || !form.category || !form.shell_price) {
       toast.error(
@@ -1007,6 +1069,79 @@ export default function ProductsPage() {
                 ? ` (${selectedProductIds.size})`
                 : ""}
             </Button>
+          )}
+          {isAdmin && (
+            <>
+              <input
+                ref={backupFileInputRef}
+                type="file"
+                accept=".zip"
+                className="hidden"
+                onChange={handleBackupFileSelected}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleBackupExport}
+                disabled={backupExporting}
+              >
+                {backupExporting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <DatabaseBackup className="h-4 w-4 mr-2" />
+                )}
+                Télécharger backup
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => backupFileInputRef.current?.click()}
+                disabled={backupImporting}
+              >
+                <DatabaseZap className="h-4 w-4 mr-2" />
+                Importer backup
+              </Button>
+              <AlertDialog
+                open={backupConfirmOpen}
+                onOpenChange={(open) => {
+                  if (!backupImporting) {
+                    setBackupConfirmOpen(open);
+                    if (!open) setPendingBackupFile(null);
+                  }
+                }}
+              >
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Restaurer ce backup ?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Cette action va <strong>remplacer toutes les données actuelles</strong>{" "}
+                      (produits, ventes, mouvements, utilisateurs, magasins) ainsi que
+                      toutes les images et QR codes par le contenu de{" "}
+                      <strong>{pendingBackupFile?.name}</strong>. Cette opération est
+                      irréversible. Voulez-vous continuer ?
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={backupImporting}>
+                      Annuler
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleBackupImportConfirmed();
+                      }}
+                      disabled={backupImporting}
+                      className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                    >
+                      {backupImporting ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : null}
+                      Oui, remplacer toutes les données
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </>
           )}
           {canCreate && (
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
