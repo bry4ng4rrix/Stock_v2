@@ -77,6 +77,7 @@ export default function MovementsPage() {
       const mDateStr = m.created_at ? m.created_at.split('T')[0] : '';
       const matchesTerm = !term ||
         (m.product_name || '').toLowerCase().includes(term) ||
+        (m.changed_by_name || '').toLowerCase().includes(term) ||
         (m.changed_by_username || '').toLowerCase().includes(term) ||
         (m.magasin_name || '').toLowerCase().includes(term) ||
         (m.note || '').toLowerCase().includes(term);
@@ -157,7 +158,8 @@ export default function MovementsPage() {
       'Stock avant': m.previous_quantity,
       'Stock après': m.new_quantity,
       Note: m.note || '',
-      Utilisateur: m.changed_by_username || 'Système',
+      Utilisateur: m.changed_by_name || 'Système',
+      Email: m.changed_by_username || '',
       Magasin: m.magasin_name || '',
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -201,7 +203,7 @@ export default function MovementsPage() {
             )}
           </div>
         </div>
-        
+
       </div>
 
       {/* KPI Cards */}
@@ -310,7 +312,7 @@ export default function MovementsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg flex items-center text-orange-600 dark:text-orange-400">
-            <ArrowDown className="mr-2 h-5 w-5" />Produits sans mouvement
+              <ArrowDown className="mr-2 h-5 w-5" />Produits sans mouvement
             </CardTitle>
             <CardDescription>Aucun mouvement sur la période ({statsPeriodLabel})</CardDescription>
           </CardHeader>
@@ -330,32 +332,32 @@ export default function MovementsPage() {
           </CardContent>
         </Card>
       </div>
-<div className='text-sm text-muted-foreground text-2xl font-bold'>Filtre mouvements par date</div>
+      <div className='text-sm text-muted-foreground text-2xl font-bold'>Filtre mouvements par date</div>
       {/* History Table */}
       <div className="flex flex-col sm:flex-row flex-wrap gap-3">
-          <div className="flex flex-col sm:flex-row gap-2 flex-1 min-w-[200px]">
-            <Input
-              type="date"
-              value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              className="w-full sm:max-w-[160px]"
-              title="Date début"
-            />
-            <Input
-              type="date"
-              value={endDate}
-              onChange={e => setEndDate(e.target.value)}
-              className="w-full sm:max-w-[160px]"
-              title="Date fin"
-            />
-          </div>
+        <div className="flex flex-col sm:flex-row gap-2 flex-1 min-w-[200px]">
           <Input
-            placeholder="Rechercher produit, vendeur..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="w-full sm:max-w-xs"
+            type="date"
+            value={startDate}
+            onChange={e => setStartDate(e.target.value)}
+            className="w-full sm:max-w-[160px]"
+            title="Date début"
+          />
+          <Input
+            type="date"
+            value={endDate}
+            onChange={e => setEndDate(e.target.value)}
+            className="w-full sm:max-w-[160px]"
+            title="Date fin"
           />
         </div>
+        <Input
+          placeholder="Rechercher produit, vendeur..."
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          className="w-full sm:max-w-xs"
+        />
+      </div>
       <Card>
         <CardHeader>
           <CardTitle>Historique des mouvements de stock</CardTitle>
@@ -408,7 +410,12 @@ export default function MovementsPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm">{m.note || '-'}</TableCell>
-                      <TableCell className="text-sm">{m.changed_by_username || 'Système'}</TableCell>
+                      <TableCell className="text-sm">
+                        <p className="font-medium">{m.changed_by_name || 'Système'}</p>
+                        {m.changed_by_username && (
+                          <p className="text-xs text-muted-foreground">{m.changed_by_username}</p>
+                        )}
+                      </TableCell>
                       {isManager && (
                         <TableCell className="text-sm">
                           <Badge variant="outline" className="font-normal border-blue-200 text-blue-700 bg-blue-50/50">
@@ -499,7 +506,12 @@ function DailyMovementsTable({ groups, today, isManager }: { groups: Record<stri
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm">{m.note || '-'}</TableCell>
-                      <TableCell className="text-sm">{m.changed_by_username || 'Système'}</TableCell>
+                      <TableCell className="text-sm">
+                        <p className="font-medium">{m.changed_by_name || 'Système'}</p>
+                        {m.changed_by_username && (
+                          <p className="text-xs text-muted-foreground">{m.changed_by_username}</p>
+                        )}
+                      </TableCell>
                       {isManager && (
                         <TableCell className="text-sm">
                           <Badge variant="outline" className="font-normal border-blue-200 text-blue-700 bg-blue-50/50">
