@@ -152,6 +152,7 @@ class MovementSerializer(serializers.ModelSerializer):
     product_reference = serializers.CharField(source="product.reference", read_only=True)
     magasin_name = serializers.CharField(source="magasin.shop_name", read_only=True)
     changed_by_name = serializers.CharField(source="changed_by.full_name", read_only=True)
+    changed_by_username = serializers.CharField(source="changed_by.username", read_only=True)
     movement_type = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
@@ -166,6 +167,7 @@ class MovementSerializer(serializers.ModelSerializer):
             "magasin_name",
             "changed_by",
             "changed_by_name",
+            "changed_by_username",
             "previous_quantity",
             "new_quantity",
             "change",
