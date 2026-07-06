@@ -77,7 +77,7 @@ export default function MovementsPage() {
       const mDateStr = m.created_at ? m.created_at.split('T')[0] : '';
       const matchesTerm = !term ||
         (m.product_name || '').toLowerCase().includes(term) ||
-        (m.changed_by_name || '').toLowerCase().includes(term) ||
+        (m.changed_by_username || '').toLowerCase().includes(term) ||
         (m.magasin_name || '').toLowerCase().includes(term) ||
         (m.note || '').toLowerCase().includes(term);
       const matchesStart = !startDate || mDateStr >= startDate;
@@ -157,7 +157,7 @@ export default function MovementsPage() {
       'Stock avant': m.previous_quantity,
       'Stock après': m.new_quantity,
       Note: m.note || '',
-      Utilisateur: m.changed_by_name || 'Système',
+      Utilisateur: m.changed_by_username || 'Système',
       Magasin: m.magasin_name || '',
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -408,7 +408,7 @@ export default function MovementsPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm">{m.note || '-'}</TableCell>
-                      <TableCell className="text-sm">{m.changed_by_name || 'Système'}</TableCell>
+                      <TableCell className="text-sm">{m.changed_by_username || 'Système'}</TableCell>
                       {isManager && (
                         <TableCell className="text-sm">
                           <Badge variant="outline" className="font-normal border-blue-200 text-blue-700 bg-blue-50/50">
@@ -499,7 +499,7 @@ function DailyMovementsTable({ groups, today, isManager }: { groups: Record<stri
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm">{m.note || '-'}</TableCell>
-                      <TableCell className="text-sm">{m.changed_by_name || 'Système'}</TableCell>
+                      <TableCell className="text-sm">{m.changed_by_username || 'Système'}</TableCell>
                       {isManager && (
                         <TableCell className="text-sm">
                           <Badge variant="outline" className="font-normal border-blue-200 text-blue-700 bg-blue-50/50">
