@@ -1077,11 +1077,13 @@ class DashboardView(APIView):
         today = timezone.now().date()
 
         if role == "admin":
-            # KPIs scoped to admin
-            admin_sales = Sale.objects.filter(magasin__admin=user)
-            admin_products = Product.objects.filter(magasin__admin=user)
-            admin_magasins = MagasinProfile.objects.filter(admin=user)
-            admin_employers = EmployerProfile.objects.filter(Q(admin=user) | Q(magasin__admin=user))
+            # KPIs scoped to admin (owner via FK, or co-admin via the admins M2M)
+            admin_sales = Sale.objects.filter(Q(magasin__admin=user) | Q(magasin__admins=user)).distinct()
+            admin_products = Product.objects.filter(Q(magasin__admin=user) | Q(magasin__admins=user)).distinct()
+            admin_magasins = MagasinProfile.objects.filter(Q(admin=user) | Q(admins=user)).distinct()
+            admin_employers = EmployerProfile.objects.filter(
+                Q(admin=user) | Q(magasin__admin=user) | Q(magasin__admins=user)
+            ).distinct()
 
             total_revenue, _, total_profit, _ = _sale_totals(admin_sales)
             total_stock_value = admin_products.aggregate(total=Sum(F('initial_quantity') * F('purchase_price'), output_field=DecimalField()))['total'] or 0
@@ -1575,7 +1577,7 @@ class MagasinViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.role == "admin":
-            return MagasinProfile.objects.filter(admin=user)
+            return MagasinProfile.objects.filter(Q(admin=user) | Q(admins=user)).distinct()
         elif user.role == "magasin":
             return MagasinProfile.objects.filter(user=user)
         return MagasinProfile.objects.none()
