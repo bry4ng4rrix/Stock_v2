@@ -403,7 +403,7 @@ class AdminMagasinProfitView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
-        magasins = MagasinProfile.objects.filter(admins=request.user)
+        magasins = MagasinProfile.objects.filter(Q(admin=request.user) | Q(admins=request.user)).distinct()
         data = []
         for magasin in magasins:
             sales_qs = Sale.objects.filter(magasin=magasin)
@@ -425,7 +425,7 @@ class AdminMagasinOverviewView(APIView):
 
     def get(self, request):
         week_start = timezone.now() - timedelta(days=7)
-        magasins = MagasinProfile.objects.filter(admins=request.user)
+        magasins = MagasinProfile.objects.filter(Q(admin=request.user) | Q(admins=request.user)).distinct()
         response_data = []
 
         for magasin in magasins:
@@ -955,7 +955,7 @@ class UsersByMagasinView(APIView):
 
         # Admin can see all magasins belonging to them
         if user.role == "admin":
-            magasins = MagasinProfile.objects.filter(admins=user)
+            magasins = MagasinProfile.objects.filter(Q(admin=user) | Q(admins=user)).distinct()
         # Magasin can see only their own magasin
         elif user.role == "magasin":
             magasins = MagasinProfile.objects.filter(user=user)
@@ -1018,7 +1018,7 @@ class MagasinStatsView(APIView):
         user = request.user
 
         if user.role == "admin":
-            magasins = MagasinProfile.objects.filter(admins=user)
+            magasins = MagasinProfile.objects.filter(Q(admin=user) | Q(admins=user)).distinct()
         elif user.role == "magasin":
             magasins = MagasinProfile.objects.filter(user=user)
         elif user.role == "employer":

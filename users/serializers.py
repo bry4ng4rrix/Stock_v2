@@ -59,7 +59,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             user = CustomUser.objects.create(username=username, is_confirmed=False, **validated_data)
             user.set_password(password)
             user.save()
-            MagasinProfile.objects.create(user=user, admin=admin, shop_name=shop_name)
+            magasin = MagasinProfile.objects.create(user=user, admin=admin, shop_name=shop_name)
+            magasin.admins.add(admin)
             return user
         elif role == "employer":
             admin = CustomUser.objects.filter(email=admin_email, role="admin").first()
