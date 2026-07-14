@@ -560,7 +560,7 @@ class DjangoAPIClient {
     transfer: async (
       sourceId: number,
       destinationId: number,
-      items: { product_id: number; quantity: number }[]
+      items: { product_id: number; quantity: number; variant_id?: number }[]
     ) => {
       return this.post<any>('/users/transfer/products/', {
         source_magasin_id: sourceId,

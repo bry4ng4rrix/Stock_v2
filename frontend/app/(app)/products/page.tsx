@@ -410,13 +410,34 @@ export default function ProductsPage() {
     }
     const cart = filteredProducts
       .filter((p) => selectedProductIds.has(p.id))
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        reference: p.reference,
-        quantity: 1,
-        maxQuantity: Number(p.initial_quantity ?? 0),
-      }))
+      .flatMap((p): TransferCartItem[] => {
+        const variants = Array.isArray(p.variants) ? p.variants : [];
+        if (variants.length === 0) {
+          return [
+            {
+              id: p.id,
+              name: p.name,
+              reference: p.reference,
+              quantity: 1,
+              maxQuantity: Number(p.initial_quantity ?? 0),
+            },
+          ];
+        }
+        return variants.map((v: any) => {
+          const variantLabel = [v.size, v.color]
+            .filter((part) => part && String(part).trim())
+            .join(" / ");
+          return {
+            id: p.id,
+            name: p.name,
+            reference: p.reference,
+            quantity: 1,
+            maxQuantity: Number(v.quantity ?? 0),
+            variantId: v.id,
+            variantLabel,
+          };
+        });
+      })
       .filter((p) => p.maxQuantity > 0);
     if (cart.length === 0) {
       toast.error("Les produits sélectionnés n'ont pas de stock disponible");

@@ -22,6 +22,9 @@ import {
   X,
   Check,
   Loader2,
+  ChevronDown,
+  ChevronRight,
+  Plus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -31,12 +34,21 @@ export interface TransferCartItem {
   reference: string;
   quantity: number;
   maxQuantity: number;
+  variantId?: number;
+  variantLabel?: string;
 }
 
 export interface TransferStore {
   magasin_id: number;
   shop_name: string;
   shop_logo?: string | null;
+}
+
+interface ProductVariant {
+  id: number;
+  size: string | null;
+  color: string | null;
+  quantity: number;
 }
 
 interface TransferProductsDialogProps {
@@ -47,6 +59,16 @@ interface TransferProductsDialogProps {
   initialCart?: TransferCartItem[];
   onSuccess?: () => void;
 }
+
+const SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL'];
+
+const formatVariantLabel = (size?: string | null, color?: string | null) => {
+  const parts = [size, color].filter((p): p is string => Boolean(p && p.trim()));
+  return parts.join(' / ');
+};
+
+const cartKey = (id: number, variantId?: number | null) =>
+  variantId != null ? `${id}:${variantId}` : `${id}`;
 
 export function TransferProductsDialog({
   open,
@@ -61,7 +83,8 @@ export function TransferProductsDialog({
   const [sourceProducts, setSourceProducts] = useState<any[]>([]);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [transferCart, setTransferCart] = useState<TransferCartItem[]>([]);
-  const [productQtyInputs, setProductQtyInputs] = useState<Record<number, number>>({});
+  const [qtyInputs, setQtyInputs] = useState<Record<string, number>>({});
+  const [expandedProductIds, setExpandedProductIds] = useState<Set<number>>(new Set());
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [submittingTransfer, setSubmittingTransfer] = useState(false);
   const initialCartRef = useRef(initialCart);
@@ -73,7 +96,8 @@ export function TransferProductsDialog({
     setProductSearchTerm('');
     setSourceProducts([]);
     setTransferCart([]);
-    setProductQtyInputs({});
+    setQtyInputs({});
+    setExpandedProductIds(new Set());
   };
 
   const handleOpenChange = (next: boolean) => {
@@ -85,9 +109,9 @@ export function TransferProductsDialog({
     if (!open || !sourceStore?.magasin_id) return;
     const cart = initialCartRef.current;
     setTransferCart(cart);
-    setProductQtyInputs(
-      cart.reduce<Record<number, number>>((acc, item) => {
-        acc[item.id] = item.quantity;
+    setQtyInputs(
+      cart.reduce<Record<string, number>>((acc, item) => {
+        acc[cartKey(item.id, item.variantId)] = item.quantity;
         return acc;
       }, {}),
     );
@@ -116,15 +140,23 @@ export function TransferProductsDialog({
     fetchProducts();
   }, [open, sourceStore?.magasin_id]);
 
-  const getProductQtyInput = (product: any) => {
-    const stock = Number(product.initial_quantity ?? 0);
-    const raw = productQtyInputs[product.id] ?? 1;
-    return Math.min(Math.max(1, raw), Math.max(stock, 1));
+  const getQtyInput = (key: string, max: number) => {
+    const raw = qtyInputs[key] ?? 1;
+    return Math.min(Math.max(1, raw), Math.max(max, 1));
   };
 
-  const setProductQtyInput = (productId: number, value: number, max: number) => {
+  const setQtyInput = (key: string, value: number, max: number) => {
     const clamped = Math.min(Math.max(1, value), Math.max(max, 1));
-    setProductQtyInputs((prev) => ({ ...prev, [productId]: clamped }));
+    setQtyInputs((prev) => ({ ...prev, [key]: clamped }));
+  };
+
+  const toggleExpand = (productId: number) => {
+    setExpandedProductIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
   };
 
   const addToTransferCart = (product: any) => {
@@ -133,11 +165,11 @@ export function TransferProductsDialog({
       toast.error(`${product.name} : stock insuffisant`);
       return;
     }
-    if (transferCart.some((item) => item.id === product.id)) {
+    if (transferCart.some((item) => item.id === product.id && item.variantId == null)) {
       toast.info(`${product.name} est déjà dans le panier`);
       return;
     }
-    const quantity = getProductQtyInput(product);
+    const quantity = getQtyInput(cartKey(product.id), stock);
     setTransferCart((prev) => [
       ...prev,
       {
@@ -151,14 +183,49 @@ export function TransferProductsDialog({
     toast.success(`${quantity} × ${product.name} ajouté au panier`);
   };
 
-  const removeFromTransferCart = (productId: number) => {
-    setTransferCart((prev) => prev.filter((item) => item.id !== productId));
+  const addVariantToTransferCart = (product: any, variant: ProductVariant) => {
+    const stock = Number(variant.quantity ?? 0);
+    if (stock <= 0) {
+      toast.error(`${product.name} : stock insuffisant pour cette variante`);
+      return;
+    }
+    if (transferCart.some((item) => item.id === product.id && item.variantId === variant.id)) {
+      toast.info('Cette variante est déjà dans le panier');
+      return;
+    }
+    const quantity = getQtyInput(cartKey(product.id, variant.id), stock);
+    const variantLabel = formatVariantLabel(variant.size, variant.color);
+    setTransferCart((prev) => [
+      ...prev,
+      {
+        id: product.id,
+        name: product.name,
+        reference: product.reference,
+        quantity,
+        maxQuantity: stock,
+        variantId: variant.id,
+        variantLabel,
+      },
+    ]);
+    toast.success(
+      `${quantity} × ${product.name}${variantLabel ? ` (${variantLabel})` : ''} ajouté au panier`,
+    );
   };
 
-  const updateTransferCartQuantity = (productId: number, value: number) => {
+  const removeFromTransferCart = (productId: number, variantId?: number) => {
+    setTransferCart((prev) =>
+      prev.filter((item) => !(item.id === productId && item.variantId === variantId)),
+    );
+  };
+
+  const updateTransferCartQuantity = (
+    productId: number,
+    variantId: number | undefined,
+    value: number,
+  ) => {
     setTransferCart((prev) =>
       prev.map((item) =>
-        item.id === productId
+        item.id === productId && item.variantId === variantId
           ? { ...item, quantity: Math.min(Math.max(1, value), item.maxQuantity) }
           : item,
       ),
@@ -192,7 +259,11 @@ export function TransferProductsDialog({
       await djangoClient.transfers.transfer(
         sourceStore.magasin_id,
         destinationStoreId as number,
-        transferCart.map((p) => ({ product_id: p.id, quantity: p.quantity })),
+        transferCart.map((p) => ({
+          product_id: p.id,
+          quantity: p.quantity,
+          ...(p.variantId != null ? { variant_id: p.variantId } : {}),
+        })),
       );
       toast.success('Transfert effectué');
       handleOpenChange(false);
@@ -213,7 +284,8 @@ export function TransferProductsDialog({
           <DialogDescription>
             Depuis{' '}
             <span className="font-medium text-foreground">{sourceStore?.shop_name}</span> —
-            sélectionnez des produits et choisissez le magasin de destination.
+            sélectionnez des produits (et leurs variantes) et choisissez le magasin de
+            destination.
           </DialogDescription>
         </DialogHeader>
 
@@ -245,49 +317,150 @@ export function TransferProductsDialog({
                 ) : (
                   <div className="p-2 space-y-1">
                     {filteredSourceProducts.map((product) => {
-                      const inCart = transferCart.some((item) => item.id === product.id);
-                      const stock = Number(product.initial_quantity ?? 0);
-                      const qty = getProductQtyInput(product);
+                      const variants: ProductVariant[] = Array.isArray(product.variants)
+                        ? product.variants
+                        : [];
+                      const hasVariants = variants.length > 0;
+
+                      if (!hasVariants) {
+                        const inCart = transferCart.some(
+                          (item) => item.id === product.id && item.variantId == null,
+                        );
+                        const stock = Number(product.initial_quantity ?? 0);
+                        const key = cartKey(product.id);
+                        const qty = getQtyInput(key, stock);
+                        return (
+                          <div
+                            key={product.id}
+                            className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 hover:bg-muted/50"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium truncate">{product.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {product.reference} · Stock : {stock}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Input
+                                type="number"
+                                min={1}
+                                max={stock}
+                                value={qty}
+                                disabled={inCart || stock <= 0}
+                                onChange={(e) =>
+                                  setQtyInput(key, Number(e.target.value), stock)
+                                }
+                                className="w-16 h-8 text-center px-1"
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={inCart ? 'secondary' : 'outline'}
+                                disabled={inCart || stock <= 0}
+                                onClick={() => addToTransferCart(product)}
+                              >
+                                {inCart ? (
+                                  <>
+                                    <Check className="h-3.5 w-3.5 mr-1" />
+                                    Sélectionné
+                                  </>
+                                ) : (
+                                  'Sélectionner'
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const totalStock = variants.reduce(
+                        (s, v) => s + Number(v.quantity || 0),
+                        0,
+                      );
+                      const expanded = expandedProductIds.has(product.id);
+                      const sortedVariants = [...variants].sort((a, b) => {
+                        const ia = SIZE_ORDER.indexOf((a.size ?? '').toUpperCase());
+                        const ib = SIZE_ORDER.indexOf((b.size ?? '').toUpperCase());
+                        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+                      });
+
                       return (
-                        <div
-                          key={product.id}
-                          className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 hover:bg-muted/50"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium truncate">{product.name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {product.reference} · Stock : {stock}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <Input
-                              type="number"
-                              min={1}
-                              max={stock}
-                              value={qty}
-                              disabled={inCart || stock <= 0}
-                              onChange={(e) =>
-                                setProductQtyInput(product.id, Number(e.target.value), stock)
-                              }
-                              className="w-16 h-8 text-center px-1"
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant={inCart ? 'secondary' : 'outline'}
-                              disabled={inCart || stock <= 0}
-                              onClick={() => addToTransferCart(product)}
-                            >
-                              {inCart ? (
-                                <>
-                                  <Check className="h-3.5 w-3.5 mr-1" />
-                                  Sélectionné
-                                </>
-                              ) : (
-                                'Sélectionner'
-                              )}
-                            </Button>
-                          </div>
+                        <div key={product.id} className="rounded-md border overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => toggleExpand(product.id)}
+                            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 text-left"
+                          >
+                            {expanded ? (
+                              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium truncate">{product.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {product.reference} · {variants.length} variante(s) · Stock :{' '}
+                                {totalStock}
+                              </p>
+                            </div>
+                          </button>
+                          {expanded && (
+                            <div className="border-t bg-muted/20 px-2 py-2 space-y-1">
+                              {sortedVariants.map((variant) => {
+                                const vLabel = formatVariantLabel(variant.size, variant.color);
+                                const vStock = Number(variant.quantity ?? 0);
+                                const inCart = transferCart.some(
+                                  (item) =>
+                                    item.id === product.id && item.variantId === variant.id,
+                                );
+                                const key = cartKey(product.id, variant.id);
+                                const qty = getQtyInput(key, vStock);
+                                return (
+                                  <div
+                                    key={variant.id}
+                                    className="flex items-center justify-between gap-2 rounded-md border bg-background px-2 py-1.5"
+                                  >
+                                    <div className="min-w-0 text-xs">
+                                      <span className="font-semibold">
+                                        {vLabel || 'Standard'}
+                                      </span>
+                                      <span className="text-muted-foreground">
+                                        {' '}
+                                        · Stock : {vStock}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <Input
+                                        type="number"
+                                        min={1}
+                                        max={vStock}
+                                        value={qty}
+                                        disabled={inCart || vStock <= 0}
+                                        onChange={(e) =>
+                                          setQtyInput(key, Number(e.target.value), vStock)
+                                        }
+                                        className="w-14 h-7 text-center px-1 text-xs"
+                                      />
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant={inCart ? 'secondary' : 'outline'}
+                                        disabled={inCart || vStock <= 0}
+                                        className="h-7 px-2"
+                                        onClick={() => addVariantToTransferCart(product, variant)}
+                                      >
+                                        {inCart ? (
+                                          <Check className="h-3.5 w-3.5" />
+                                        ) : (
+                                          <Plus className="h-3.5 w-3.5" />
+                                        )}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -314,11 +487,19 @@ export function TransferProductsDialog({
                     <div className="p-2 space-y-1">
                       {transferCart.map((item) => (
                         <div
-                          key={item.id}
+                          key={cartKey(item.id, item.variantId)}
                           className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2"
                         >
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium truncate">{item.name}</p>
+                            <p className="text-sm font-medium truncate">
+                              {item.name}
+                              {item.variantLabel && (
+                                <span className="text-muted-foreground font-normal">
+                                  {' '}
+                                  — {item.variantLabel}
+                                </span>
+                              )}
+                            </p>
                             <p className="text-xs text-muted-foreground">
                               {item.reference} · max {item.maxQuantity}
                             </p>
@@ -330,7 +511,11 @@ export function TransferProductsDialog({
                               max={item.maxQuantity}
                               value={item.quantity}
                               onChange={(e) =>
-                                updateTransferCartQuantity(item.id, Number(e.target.value))
+                                updateTransferCartQuantity(
+                                  item.id,
+                                  item.variantId,
+                                  Number(e.target.value),
+                                )
                               }
                               className="w-16 h-8 text-center px-1"
                             />
@@ -339,7 +524,7 @@ export function TransferProductsDialog({
                               size="icon"
                               variant="ghost"
                               className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              onClick={() => removeFromTransferCart(item.id)}
+                              onClick={() => removeFromTransferCart(item.id, item.variantId)}
                             >
                               <X className="h-4 w-4" />
                             </Button>

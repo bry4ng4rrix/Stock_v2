@@ -13,6 +13,7 @@ from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser
 from django.db.models import Sum, F, DecimalField, Count, Value, Q
 from django.db.models.functions import Coalesce
+from django.db import transaction
 from django.utils import timezone
 from django.http import HttpResponse
 from django.conf import settings
@@ -1680,6 +1681,13 @@ class ChatMessageHistoryView(APIView):
         serializer = ChatMessageSerializer(messages, many=True)
         return Response(serializer.data)
 
+class _TransferValidationError(Exception):
+    def __init__(self, message, status=400):
+        self.message = message
+        self.status = status
+        super().__init__(message)
+
+
 class TransferProductsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1710,98 +1718,197 @@ class TransferProductsView(APIView):
         if not source_id or not destination_id or not raw_items:
             return Response({"error": "Paramètres manquants ou invalides"}, status=400)
         try:
-            source_magasin = MagasinProfile.objects.get(id=source_id, admin=user)
-            dest_magasin = MagasinProfile.objects.get(id=destination_id, admin=user)
+            source_magasin = MagasinProfile.objects.filter(
+                Q(admin=user) | Q(admins=user), id=source_id
+            ).distinct().get()
+            dest_magasin = MagasinProfile.objects.filter(
+                Q(admin=user) | Q(admins=user), id=destination_id
+            ).distinct().get()
         except MagasinProfile.DoesNotExist:
             return Response({"error": "Magasin source ou destination introuvable ou non autorisé"}, status=404)
 
         transfer_note = f"Transfert du magasin {source_magasin.id} au magasin {dest_magasin.id} par {user.full_name}"
         transferred_summary = []
 
-        for raw_item in raw_items:
-            product_id = raw_item.get("product_id")
-            if not product_id:
-                return Response({"error": "Identifiant produit manquant"}, status=400)
-            try:
-                product = Product.objects.get(id=product_id, magasin=source_magasin)
-            except Product.DoesNotExist:
-                return Response({"error": "Certains produits n'appartiennent pas au magasin source"}, status=400)
+        try:
+          with transaction.atomic():
+            for raw_item in raw_items:
+                product_id = raw_item.get("product_id")
+                if not product_id:
+                    raise _TransferValidationError("Identifiant produit manquant")
+                try:
+                    product = Product.objects.get(id=product_id, magasin=source_magasin)
+                except Product.DoesNotExist:
+                    raise _TransferValidationError("Certains produits n'appartiennent pas au magasin source")
 
-            stock = int(product.initial_quantity or 0)
-            requested_qty = raw_item.get("quantity")
-            quantity = stock if requested_qty is None else int(requested_qty)
+                variant_id = raw_item.get("variant_id")
+                requested_qty = raw_item.get("quantity")
 
-            if quantity <= 0:
-                return Response({"error": f"Quantité invalide pour {product.name}"}, status=400)
-            if quantity > stock:
-                return Response(
-                    {"error": f"Stock insuffisant pour {product.name}. Disponible : {stock}."},
-                    status=400,
-                )
+                if variant_id:
+                    try:
+                        variant = ProductVariant.objects.get(id=variant_id, product=product)
+                    except ProductVariant.DoesNotExist:
+                        raise _TransferValidationError(f"Variante introuvable pour {product.name}")
 
-            transferred_summary.append(f"{product.name} x{quantity}")
+                    variant_stock = int(variant.quantity or 0)
+                    quantity = variant_stock if requested_qty is None else int(requested_qty)
+                    variant_label = _variant_label(variant.size, variant.color)
 
-            if quantity == stock:
-                product.magasin = dest_magasin
+                    if quantity <= 0:
+                        raise _TransferValidationError(f"Quantité invalide pour {product.name} ({variant_label})")
+                    if quantity > variant_stock:
+                        raise _TransferValidationError(
+                            f"Stock insuffisant pour {product.name} ({variant_label}). Disponible : {variant_stock}."
+                        )
+
+                    transferred_summary.append(f"{product.name} {variant_label} x{quantity}")
+
+                    previous_qty = int(product.initial_quantity or 0)
+                    if quantity == variant_stock:
+                        variant.delete()
+                    else:
+                        variant.quantity = variant_stock - quantity
+                        variant.save()
+                    product.initial_quantity = ProductVariant.objects.filter(product=product).aggregate(
+                        total=Sum("quantity")
+                    )["total"] or 0
+                    product.save(update_fields=["initial_quantity"])
+                    Movement.objects.create(
+                        product=product,
+                        product_name=product.name,
+                        variant_label=variant_label,
+                        magasin=source_magasin,
+                        changed_by=user,
+                        previous_quantity=previous_qty,
+                        new_quantity=product.initial_quantity,
+                        change=-quantity,
+                        note=f"{transfer_note} (sortie partielle)",
+                    )
+
+                    dest_product = Product.objects.filter(magasin=dest_magasin, name=product.name).first()
+                    if not dest_product:
+                        dest_product = Product.objects.create(
+                            name=product.name,
+                            reference=self._unique_reference(product.reference, dest_magasin.id),
+                            brand=product.brand,
+                            category=product.category,
+                            description=product.description,
+                            purchase_price=product.purchase_price,
+                            unit_price=product.unit_price,
+                            shell_price=product.shell_price,
+                            initial_quantity=0,
+                            alert_threshold=product.alert_threshold,
+                            expiry_date=product.expiry_date,
+                            magasin=dest_magasin,
+                        )
+                    dest_previous = int(dest_product.initial_quantity or 0)
+
+                    dest_variant = ProductVariant.objects.filter(
+                        product=dest_product, size=variant.size, color=variant.color
+                    ).first()
+                    if dest_variant:
+                        dest_variant.quantity = int(dest_variant.quantity or 0) + quantity
+                        dest_variant.save()
+                    else:
+                        ProductVariant.objects.create(
+                            product=dest_product,
+                            size=variant.size,
+                            color=variant.color,
+                            quantity=quantity,
+                        )
+                    dest_product.initial_quantity = ProductVariant.objects.filter(product=dest_product).aggregate(
+                        total=Sum("quantity")
+                    )["total"] or 0
+                    dest_product.save(update_fields=["initial_quantity"])
+
+                    Movement.objects.create(
+                        product=dest_product,
+                        product_name=dest_product.name,
+                        variant_label=variant_label,
+                        magasin=dest_magasin,
+                        changed_by=user,
+                        previous_quantity=dest_previous,
+                        new_quantity=dest_product.initial_quantity,
+                        change=quantity,
+                        note=f"{transfer_note} (entrée partielle)",
+                    )
+                    continue
+
+                stock = int(product.initial_quantity or 0)
+                quantity = stock if requested_qty is None else int(requested_qty)
+
+                if quantity <= 0:
+                    raise _TransferValidationError(f"Quantité invalide pour {product.name}")
+                if quantity > stock:
+                    raise _TransferValidationError(
+                        f"Stock insuffisant pour {product.name}. Disponible : {stock}."
+                    )
+
+                transferred_summary.append(f"{product.name} x{quantity}")
+
+                if quantity == stock:
+                    product.magasin = dest_magasin
+                    product.save()
+                    Movement.objects.create(
+                        product=product,
+                        product_name=product.name,
+                        magasin=dest_magasin,
+                        changed_by=user,
+                        previous_quantity=stock,
+                        new_quantity=stock,
+                        change=0,
+                        note=transfer_note,
+                    )
+                    continue
+
+                previous_qty = stock
+                product.initial_quantity = stock - quantity
                 product.save()
                 Movement.objects.create(
                     product=product,
                     product_name=product.name,
+                    magasin=source_magasin,
+                    changed_by=user,
+                    previous_quantity=previous_qty,
+                    new_quantity=product.initial_quantity,
+                    change=-quantity,
+                    note=f"{transfer_note} (sortie partielle)",
+                )
+
+                dest_product = Product.objects.filter(magasin=dest_magasin, name=product.name).first()
+                if dest_product:
+                    dest_previous = int(dest_product.initial_quantity or 0)
+                    dest_product.initial_quantity = dest_previous + quantity
+                    dest_product.save()
+                else:
+                    dest_product = Product.objects.create(
+                        name=product.name,
+                        reference=self._unique_reference(product.reference, dest_magasin.id),
+                        brand=product.brand,
+                        category=product.category,
+                        description=product.description,
+                        purchase_price=product.purchase_price,
+                        unit_price=product.unit_price,
+                        shell_price=product.shell_price,
+                        initial_quantity=quantity,
+                        alert_threshold=product.alert_threshold,
+                        expiry_date=product.expiry_date,
+                        magasin=dest_magasin,
+                    )
+                    dest_previous = 0
+
+                Movement.objects.create(
+                    product=dest_product,
+                    product_name=dest_product.name,
                     magasin=dest_magasin,
                     changed_by=user,
-                    previous_quantity=stock,
-                    new_quantity=stock,
-                    change=0,
-                    note=transfer_note,
+                    previous_quantity=dest_previous,
+                    new_quantity=dest_product.initial_quantity,
+                    change=quantity,
+                    note=f"{transfer_note} (entrée partielle)",
                 )
-                continue
-
-            previous_qty = stock
-            product.initial_quantity = stock - quantity
-            product.save()
-            Movement.objects.create(
-                product=product,
-                product_name=product.name,
-                magasin=source_magasin,
-                changed_by=user,
-                previous_quantity=previous_qty,
-                new_quantity=product.initial_quantity,
-                change=-quantity,
-                note=f"{transfer_note} (sortie partielle)",
-            )
-
-            dest_product = Product.objects.filter(magasin=dest_magasin, name=product.name).first()
-            if dest_product:
-                dest_previous = int(dest_product.initial_quantity or 0)
-                dest_product.initial_quantity = dest_previous + quantity
-                dest_product.save()
-            else:
-                dest_product = Product.objects.create(
-                    name=product.name,
-                    reference=self._unique_reference(product.reference, dest_magasin.id),
-                    brand=product.brand,
-                    category=product.category,
-                    description=product.description,
-                    purchase_price=product.purchase_price,
-                    unit_price=product.unit_price,
-                    shell_price=product.shell_price,
-                    initial_quantity=quantity,
-                    alert_threshold=product.alert_threshold,
-                    expiry_date=product.expiry_date,
-                    magasin=dest_magasin,
-                )
-                dest_previous = 0
-
-            Movement.objects.create(
-                product=dest_product,
-                product_name=dest_product.name,
-                magasin=dest_magasin,
-                changed_by=user,
-                previous_quantity=dest_previous,
-                new_quantity=dest_product.initial_quantity,
-                change=quantity,
-                note=f"{transfer_note} (entrée partielle)",
-            )
+        except _TransferValidationError as exc:
+            return Response({"error": exc.message}, status=exc.status)
 
         if transferred_summary:
             preview = ", ".join(transferred_summary[:3])
