@@ -278,7 +278,7 @@ export function TransferProductsDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-7xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>Transfert de produits</DialogTitle>
           <DialogDescription>
@@ -576,11 +576,10 @@ export function TransferProductsDialog({
                           key={store.magasin_id}
                           type="button"
                           onClick={() => setDestinationStoreId(store.magasin_id)}
-                          className={`w-full flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 ${
-                            destinationStoreId === store.magasin_id
-                              ? 'bg-primary/10 border border-primary/30 font-medium'
-                              : 'border border-transparent'
-                          }`}
+                          className={`w-full flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 ${destinationStoreId === store.magasin_id
+                            ? 'bg-primary/10 border border-primary/30 font-medium'
+                            : 'border border-transparent'
+                            }`}
                         >
                           {store.shop_logo ? (
                             <img src={store.shop_logo} alt="" className="h-5 w-5 rounded-full object-cover" />
