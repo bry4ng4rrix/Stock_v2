@@ -53,6 +53,7 @@ export default function SuperAdminPage() {
     ...(s.employers || []).map((e: any) => ({ ...e, shop_name: s.shop_name })),
   ]).filter(Boolean);
 
+  const handleChangeRole = async (userId: number, newRole: string) => {
     setChangingRole(userId);
     try {
       await djangoClient.put(`/users/role/${userId}/`, { role: newRole });
