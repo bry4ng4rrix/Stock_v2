@@ -62,6 +62,8 @@ interface Sale {
   id: number;
   product?: number;
   product_name?: string;
+  variant?: number;
+  variant_label?: string | null;
   seller_name?: string;
   shop_name?: string;
   customer_name?: string;
@@ -439,6 +441,11 @@ export default function SalesPage() {
       return;
     }
 
+    if (hasVariants && !selectedVariant) {
+      toast.error('Veuillez sélectionner une variante');
+      return;
+    }
+
     if (qty > currentStock) {
       toast.error(`Stock insuffisant. Disponible : ${currentStock}`);
       return;
@@ -453,6 +460,10 @@ export default function SalesPage() {
       customer_name: customerName,
       is_paid: isPaid,
     };
+
+    if (hasVariants && selectedVariant) {
+      payload.variant = selectedVariant.id;
+    }
 
     if (paymentAmountValue > 0) {
       payload.payment_amount = paymentAmountValue;
@@ -938,6 +949,7 @@ export default function SalesPage() {
                     <Input
                       type="number"
                       min="1"
+                      max={selectedProduct ? currentStock : undefined}
                       value={quantity}
                       onChange={(e) =>
                         setQuantity(e.target.value)
@@ -1367,6 +1379,11 @@ export default function SalesPage() {
                           {sale.product_name ||
                             `Produit #${sale.product}`}
                         </p>
+                        {sale.variant_label && (
+                          <p className="text-xs text-muted-foreground">
+                            {sale.variant_label}
+                          </p>
+                        )}
                       </TableCell>
 
                       <TableCell className="text-right">

@@ -244,6 +244,7 @@ class ProductVariant(models.Model):
 class Sale(models.Model):
     """Model representing a sale transaction for a product."""
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="sales")
+    variant = models.ForeignKey(ProductVariant, on_delete=models.SET_NULL, related_name="sales", null=True, blank=True)
     magasin = models.ForeignKey("MagasinProfile", on_delete=models.SET_NULL, related_name="sales", null=True, blank=True)
     seller = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, related_name="sales", null=True, blank=True)
     quantity = models.PositiveIntegerField()

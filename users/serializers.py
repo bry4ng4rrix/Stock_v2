@@ -105,6 +105,7 @@ class SaleSerializer(serializers.ModelSerializer):
     seller_name = serializers.CharField(source="seller.full_name", read_only=True)
     shop_name = serializers.CharField(source="magasin.shop_name", read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
+    variant_label = serializers.SerializerMethodField(read_only=True)
     profit_per_unit = serializers.SerializerMethodField(read_only=True)
     total_profit = serializers.SerializerMethodField(read_only=True)
 
@@ -114,6 +115,8 @@ class SaleSerializer(serializers.ModelSerializer):
             "id",
             "product",
             "product_name",
+            "variant",
+            "variant_label",
             "magasin",
             "shop_name",
             "seller",
@@ -133,13 +136,40 @@ class SaleSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         product = attrs.get("product")
+        variant = attrs.get("variant")
         quantity = attrs.get("quantity")
-        if product and quantity:
-            if product.initial_quantity < quantity:
+
+        if variant and product and variant.product_id != product.id:
+            raise serializers.ValidationError(
+                {"variant": "Cette variante n'appartient pas au produit sélectionné."}
+            )
+
+        if product and product.variants.exists() and not variant:
+            raise serializers.ValidationError(
+                {"variant": "Veuillez sélectionner une variante (taille/couleur) pour ce produit."}
+            )
+
+        if quantity:
+            if variant:
+                if variant.quantity < quantity:
+                    raise serializers.ValidationError(
+                        {"quantity": f"Quantité en stock insuffisante pour cette variante. Stock disponible : {variant.quantity}."}
+                    )
+            elif product and product.initial_quantity < quantity:
                 raise serializers.ValidationError(
                     {"quantity": f"Quantité en stock insuffisante. Stock disponible : {product.initial_quantity}."}
                 )
         return attrs
+
+    def get_variant_label(self, obj):
+        if not obj.variant:
+            return None
+        parts = []
+        if obj.variant.size:
+            parts.append(obj.variant.size.upper())
+        if obj.variant.color:
+            parts.append(obj.variant.color)
+        return ' '.join(parts) if parts else None
 
     def get_profit_per_unit(self, obj):
         return obj.profit_per_unit

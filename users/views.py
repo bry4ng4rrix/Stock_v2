@@ -479,6 +479,7 @@ class SaleViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         validated = serializer.validated_data
         product = validated.get('product')
+        variant = validated.get('variant')
         user = self.request.user
 
         # Security check: ensure the product belongs to the current user's company/store
@@ -500,21 +501,36 @@ class SaleViewSet(viewsets.ModelViewSet):
             serializer.validated_data['payment_date'] = timezone.now()
         if not validated.get('is_paid', True) and not validated.get('payment_due_date'):
             serializer.validated_data['payment_due_date'] = (timezone.now().date() + timedelta(days=7))
-        old_qty = product.initial_quantity or 0
-        sale = serializer.save(seller=self.request.user, magasin=product.magasin)
-        product.initial_quantity -= sale.quantity
-        product.total_profit += sale.total_profit
-        product.save()
-        Movement.objects.create(
-            product=product,
-            product_name=product.name,
-            magasin=product.magasin,
-            changed_by=self.request.user,
-            previous_quantity=old_qty,
-            new_quantity=product.initial_quantity,
-            change=-sale.quantity,
-            note=f"Vente par {self.request.user.full_name}"
-        )
+
+        with transaction.atomic():
+            old_qty = product.initial_quantity or 0
+            sale = serializer.save(seller=self.request.user, magasin=product.magasin)
+
+            variant_label = None
+            if variant:
+                variant.quantity = (variant.quantity or 0) - sale.quantity
+                variant.save(update_fields=['quantity'])
+                variant_label = _variant_label(variant.size, variant.color)
+                product.initial_quantity = ProductVariant.objects.filter(product=product).aggregate(
+                    total=Sum('quantity')
+                )['total'] or 0
+            else:
+                product.initial_quantity -= sale.quantity
+
+            product.total_profit += sale.total_profit
+            product.save()
+
+            Movement.objects.create(
+                product=product,
+                product_name=product.name,
+                variant_label=variant_label,
+                magasin=product.magasin,
+                changed_by=self.request.user,
+                previous_quantity=old_qty,
+                new_quantity=product.initial_quantity,
+                change=-sale.quantity,
+                note=f"Vente par {self.request.user.full_name}"
+            )
 
 
 class MovementViewSet(viewsets.ReadOnlyModelViewSet):
