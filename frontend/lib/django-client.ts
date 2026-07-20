@@ -442,6 +442,10 @@ class DjangoAPIClient {
       return this.post<any>('/users/sales/', data)
     },
 
+    createBulk: async (data: any) => {
+      return this.post<any>('/users/sales/bulk/', data)
+    },
+
     list: async (filters?: { store_id?: number; date_range?: string }) => {
       const params = new URLSearchParams()
       if (filters?.store_id) params.append('store_id', filters.store_id.toString())

@@ -8,7 +8,7 @@ import zipfile
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework import status, viewsets
+from rest_framework import status, viewsets, serializers
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser
 from django.db.models import Sum, F, DecimalField, Count, Value, Q
@@ -19,6 +19,7 @@ from django.http import HttpResponse
 from django.conf import settings
 from django.core.management import call_command
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 
 from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification
 from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer
@@ -32,6 +33,20 @@ def _variant_label(size, color):
     """Build a human-readable label ('Taille/Couleur') for a product variant."""
     parts = [str(p).strip() for p in [size, color] if p and str(p).strip()]
     return '/'.join(parts) if parts else None
+
+
+def _check_sale_ownership(user, product):
+    """Ensure the requesting user is allowed to record a sale for this product's store."""
+    if user.role in ("admin", "magasin"):
+        if not product.magasin or user not in product.magasin.admins.all():
+            raise serializers.ValidationError({"product": "Ce produit n'appartient pas à l'un de vos magasins."})
+    elif user.role == "employer":
+        try:
+            employer = EmployerProfile.objects.get(user=user)
+            if not product.magasin or product.magasin != employer.magasin:
+                raise serializers.ValidationError({"product": "Ce produit n'appartient pas à votre magasin d'affectation."})
+        except EmployerProfile.DoesNotExist:
+            raise serializers.ValidationError({"detail": "Profil employé introuvable."})
 
 
 def _auto_generate_qr(product):
@@ -483,19 +498,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         user = self.request.user
 
         # Security check: ensure the product belongs to the current user's company/store
-        if user.role == "admin":
-            if not product.magasin or user not in product.magasin.admins.all():
-                raise serializers.ValidationError({"product": "Ce produit n'appartient pas à l'un de vos magasins."})
-        elif user.role == "magasin":
-            if not product.magasin or user not in product.magasin.admins.all():
-                raise serializers.ValidationError({"product": "Ce produit n'appartient pas à l'un de vos magasins."})
-        elif user.role == "employer":
-            try:
-                employer = EmployerProfile.objects.get(user=user)
-                if not product.magasin or product.magasin != employer.magasin:
-                    raise serializers.ValidationError({"product": "Ce produit n'appartient pas à votre magasin d'affectation."})
-            except EmployerProfile.DoesNotExist:
-                raise serializers.ValidationError({"detail": "Profil employé introuvable."})
+        _check_sale_ownership(user, product)
 
         if validated.get('is_paid', True) and not validated.get('payment_date'):
             serializer.validated_data['payment_date'] = timezone.now()
@@ -531,6 +534,142 @@ class SaleViewSet(viewsets.ModelViewSet):
                 change=-sale.quantity,
                 note=f"Vente par {self.request.user.full_name}"
             )
+
+
+class BulkSaleView(APIView):
+    """Create several Sale records for one product (one per variant) in a single atomic operation.
+
+    Lets a single 'vente' cover multiple variants (e.g. 1 Blanc + 2 Marron) without leaving
+    stock inconsistent if a later line fails validation.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        product_id = request.data.get("product_id")
+        raw_items = request.data.get("items")
+
+        if not product_id:
+            return Response({"error": "Produit manquant"}, status=400)
+        if not isinstance(raw_items, list) or len(raw_items) == 0:
+            return Response({"error": "Aucune variante sélectionnée"}, status=400)
+
+        try:
+            product = Product.objects.get(id=product_id)
+        except Product.DoesNotExist:
+            return Response({"error": "Produit introuvable"}, status=404)
+
+        try:
+            _check_sale_ownership(user, product)
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=400)
+
+        try:
+            sale_price = Decimal(str(request.data.get("sale_price")))
+        except (TypeError, ValueError, InvalidOperation):
+            sale_price = Decimal("0")
+        if sale_price <= 0:
+            return Response({"error": "Prix de vente invalide"}, status=400)
+
+        try:
+            payment_amount = Decimal(str(request.data.get("payment_amount") or 0))
+        except (TypeError, ValueError, InvalidOperation):
+            payment_amount = Decimal("0")
+
+        customer_name = request.data.get("customer_name", "")
+        is_paid = bool(request.data.get("is_paid", True))
+        payment_due_date = request.data.get("payment_due_date")
+
+        normalized_items = []
+        for raw in raw_items:
+            variant_id = raw.get("variant_id") if isinstance(raw, dict) else None
+            if not variant_id:
+                return Response({"error": "Identifiant de variante manquant"}, status=400)
+            try:
+                quantity = int(raw.get("quantity"))
+            except (TypeError, ValueError):
+                return Response({"error": "Quantité invalide"}, status=400)
+            if quantity > 0:
+                normalized_items.append((variant_id, quantity))
+
+        if not normalized_items:
+            return Response({"error": "Veuillez indiquer une quantité pour au moins une variante"}, status=400)
+
+        total_qty = sum(q for _, q in normalized_items)
+        payment_date = timezone.now() if is_paid else None
+        if not is_paid and not payment_due_date:
+            payment_due_date = timezone.now().date() + timedelta(days=7)
+
+        created_sales = []
+        try:
+            with transaction.atomic():
+                old_qty = product.initial_quantity or 0
+                variant_labels = []
+                remaining_payment = payment_amount
+
+                for idx, (variant_id, quantity) in enumerate(normalized_items):
+                    try:
+                        variant = ProductVariant.objects.get(id=variant_id, product=product)
+                    except ProductVariant.DoesNotExist:
+                        raise serializers.ValidationError({"variant": f"Variante introuvable (id={variant_id})"})
+
+                    if variant.quantity < quantity:
+                        label = _variant_label(variant.size, variant.color) or product.name
+                        raise serializers.ValidationError(
+                            {"quantity": f"Stock insuffisant pour {label}. Disponible : {variant.quantity}."}
+                        )
+
+                    if not is_paid and payment_amount > 0:
+                        is_last = idx == len(normalized_items) - 1
+                        line_payment = remaining_payment if is_last else (
+                            payment_amount * quantity / total_qty
+                        ).quantize(Decimal("0.01"))
+                        remaining_payment -= line_payment
+                    else:
+                        line_payment = Decimal("0")
+
+                    sale = Sale.objects.create(
+                        product=product,
+                        variant=variant,
+                        magasin=product.magasin,
+                        seller=user,
+                        quantity=quantity,
+                        sale_price=sale_price,
+                        customer_name=customer_name,
+                        is_paid=is_paid,
+                        payment_amount=line_payment,
+                        payment_date=payment_date,
+                        payment_due_date=payment_due_date if not is_paid else None,
+                    )
+                    created_sales.append(sale)
+
+                    variant.quantity = variant.quantity - quantity
+                    variant.save(update_fields=["quantity"])
+                    variant_labels.append(f"{_variant_label(variant.size, variant.color) or 'Variante'} x{quantity}")
+
+                    product.total_profit = (product.total_profit or 0) + sale.total_profit
+
+                product.initial_quantity = ProductVariant.objects.filter(product=product).aggregate(
+                    total=Sum("quantity")
+                )["total"] or 0
+                product.save()
+
+                Movement.objects.create(
+                    product=product,
+                    product_name=product.name,
+                    variant_label=", ".join(variant_labels),
+                    magasin=product.magasin,
+                    changed_by=user,
+                    previous_quantity=old_qty,
+                    new_quantity=product.initial_quantity,
+                    change=-total_qty,
+                    note=f"Vente par {user.full_name}",
+                )
+        except serializers.ValidationError as exc:
+            return Response(exc.detail, status=400)
+
+        serialized = SaleSerializer(created_sales, many=True, context={"request": request})
+        return Response({"sales": serialized.data}, status=201)
 
 
 class MovementViewSet(viewsets.ReadOnlyModelViewSet):

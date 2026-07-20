@@ -151,8 +151,8 @@ export default function SalesPage() {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentDueDate, setPaymentDueDate] = useState('');
 
-  const [selectedSize, setSelectedSize] = useState('');
-  const [selectedColor, setSelectedColor] = useState('');
+  // Quantité à vendre par variant (id du variant -> quantité saisie)
+  const [variantQuantities, setVariantQuantities] = useState<Record<number, string>>({});
 
   const activeStoreId = isAdmin
     ? selectedStoreId
@@ -161,28 +161,27 @@ export default function SalesPage() {
   const productVariants = selectedProduct?.variants ?? [];
   const hasVariants = productVariants.length > 0;
 
-  const availableSizes = useMemo(() => {
-    const sizes = productVariants
-      .filter(v => v.quantity > 0 && v.size)
-      .map(v => v.size as string);
-    return [...new Set(sizes)];
-  }, [productVariants]);
+  const sellableVariants = useMemo(
+    () => productVariants.filter(v => v.quantity > 0),
+    [productVariants]
+  );
 
-  const availableColors = useMemo(() => {
-    const base = selectedSize
-      ? productVariants.filter(v => v.size === selectedSize && v.quantity > 0 && v.color)
-      : productVariants.filter(v => v.quantity > 0 && v.color);
-    const colors = base.map(v => v.color as string);
-    return [...new Set(colors)];
-  }, [productVariants, selectedSize]);
+  const handleVariantQtyChange = (variantId: number, rawValue: string, max: number) => {
+    if (rawValue === '') {
+      setVariantQuantities(prev => ({ ...prev, [variantId]: '' }));
+      return;
+    }
+    const parsed = parseInt(rawValue, 10);
+    const clamped = Number.isNaN(parsed) ? 0 : Math.min(Math.max(0, parsed), max);
+    setVariantQuantities(prev => ({ ...prev, [variantId]: String(clamped) }));
+  };
 
-  const selectedVariant = useMemo(() => {
-    if (!hasVariants) return null;
-    return productVariants.find(v =>
-      (!selectedSize || v.size === selectedSize) &&
-      (!selectedColor || v.color === selectedColor)
-    ) ?? null;
-  }, [productVariants, selectedSize, selectedColor, hasVariants]);
+  const totalVariantQty = useMemo(() => {
+    return Object.values(variantQuantities).reduce(
+      (sum, val) => sum + (parseInt(val, 10) || 0),
+      0
+    );
+  }, [variantQuantities]);
 
   const fetchStores = useCallback(async () => {
     try {
@@ -340,8 +339,7 @@ export default function SalesPage() {
   const handleProductSelect = (product: Product) => {
     setSelectedProduct(product);
     setProductSearch(product.name);
-    setSelectedSize('');
-    setSelectedColor('');
+    setVariantQuantities({});
     const productPrice = product.sell_price || product.sale_price || product.shell_price || 0;
     setSalePrice(String(productPrice));
     setShowProductDropdown(false);
@@ -353,6 +351,7 @@ export default function SalesPage() {
     setSelectedProduct(null);
     setProductSearch('');
     setSalePrice('');
+    setVariantQuantities({});
     setShowProductDropdown(false);
     setSaleProducts([]);
   };
@@ -363,8 +362,7 @@ export default function SalesPage() {
     setSelectedStoreId('');
     setStoreSearch('');
     setSaleProducts([]);
-    setSelectedSize('');
-    setSelectedColor('');
+    setVariantQuantities({});
     setProductSearch('');
     setQuantity('1');
     setSalePrice('');
@@ -417,13 +415,6 @@ export default function SalesPage() {
       return;
     }
 
-    const qty = parseInt(quantity);
-
-    if (isNaN(qty) || qty <= 0) {
-      toast.error('Quantité invalide');
-      return;
-    }
-
     const price = parseFloat(salePrice);
 
     if (isNaN(price) || price <= 0) {
@@ -431,62 +422,80 @@ export default function SalesPage() {
       return;
     }
 
-    if (hasVariants && !selectedSize && availableSizes.length > 0) {
-      toast.error('Veuillez sélectionner une taille');
-      return;
-    }
-
-    if (hasVariants && !selectedColor && availableColors.length > 0) {
-      toast.error('Veuillez sélectionner une couleur');
-      return;
-    }
-
-    if (hasVariants && !selectedVariant) {
-      toast.error('Veuillez sélectionner une variante');
-      return;
-    }
-
-    if (qty > currentStock) {
-      toast.error(`Stock insuffisant. Disponible : ${currentStock}`);
-      return;
-    }
-
     const paymentAmountValue = parseFloat(paymentAmount || '0');
-
-    const payload: any = {
-      product: selectedProduct.id,
-      quantity: qty,
-      sale_price: price,
-      customer_name: customerName,
-      is_paid: isPaid,
-    };
-
-    if (hasVariants && selectedVariant) {
-      payload.variant = selectedVariant.id;
-    }
-
-    if (paymentAmountValue > 0) {
-      payload.payment_amount = paymentAmountValue;
-    }
-
-    if (!isPaid) {
-      if (paymentDueDate) {
-        payload.payment_due_date = paymentDueDate;
-      } else {
-        const defaultDate = new Date();
-
-        defaultDate.setDate(defaultDate.getDate() + 7);
-
-        payload.payment_due_date = defaultDate
-          .toISOString()
-          .split('T')[0];
-      }
-    }
+    const resolvedPaymentDueDate = (() => {
+      if (isPaid) return undefined;
+      if (paymentDueDate) return paymentDueDate;
+      const defaultDate = new Date();
+      defaultDate.setDate(defaultDate.getDate() + 7);
+      return defaultDate.toISOString().split('T')[0];
+    })();
 
     setSubmitting(true);
 
     try {
-      await djangoClient.sales.create(payload);
+      if (hasVariants) {
+        const items = Object.entries(variantQuantities)
+          .map(([variantId, value]) => ({
+            variant_id: Number(variantId),
+            quantity: parseInt(value, 10) || 0,
+          }))
+          .filter((item) => item.quantity > 0);
+
+        if (items.length === 0) {
+          toast.error('Veuillez indiquer une quantité pour au moins une variante');
+          setSubmitting(false);
+          return;
+        }
+
+        const payload: any = {
+          product_id: selectedProduct.id,
+          sale_price: price,
+          customer_name: customerName,
+          is_paid: isPaid,
+          items,
+        };
+
+        if (paymentAmountValue > 0) {
+          payload.payment_amount = paymentAmountValue;
+        }
+        if (resolvedPaymentDueDate) {
+          payload.payment_due_date = resolvedPaymentDueDate;
+        }
+
+        await djangoClient.sales.createBulk(payload);
+      } else {
+        const qty = parseInt(quantity);
+
+        if (isNaN(qty) || qty <= 0) {
+          toast.error('Quantité invalide');
+          setSubmitting(false);
+          return;
+        }
+
+        if (qty > currentStock) {
+          toast.error(`Stock insuffisant. Disponible : ${currentStock}`);
+          setSubmitting(false);
+          return;
+        }
+
+        const payload: any = {
+          product: selectedProduct.id,
+          quantity: qty,
+          sale_price: price,
+          customer_name: customerName,
+          is_paid: isPaid,
+        };
+
+        if (paymentAmountValue > 0) {
+          payload.payment_amount = paymentAmountValue;
+        }
+        if (resolvedPaymentDueDate) {
+          payload.payment_due_date = resolvedPaymentDueDate;
+        }
+
+        await djangoClient.sales.create(payload);
+      }
 
       toast.success('Vente enregistrée avec succès');
 
@@ -608,9 +617,7 @@ export default function SalesPage() {
     return <span className="font-medium text-amber-600">{formatted}</span>;
   };
 
-  const currentStock = hasVariants
-    ? (selectedVariant?.quantity ?? 0)
-    : (selectedProduct?.initial_quantity ?? 0);
+  const currentStock = selectedProduct?.initial_quantity ?? 0;
 
   return (
     <div className="p-6 space-y-6">
@@ -832,84 +839,55 @@ export default function SalesPage() {
                   </div>
                 </div>
 
-                {/* VARIANT SELECTS */}
+                {/* VARIANT QUANTITIES */}
                 {selectedProduct && hasVariants && (
-                  <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Variante</p>
+                  <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Quantité à vendre par variante
+                    </p>
 
-                    {availableSizes.length > 0 && (
-                      <div className="space-y-1">
-                        <Label className="text-xs">Taille</Label>
-                        <Select
-                          value={selectedSize || '__none__'}
-                          onValueChange={v => {
-                            const val = v === '__none__' ? '' : v;
-                            setSelectedSize(val);
-                            setSelectedColor('');
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Choisir une taille" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">— Toutes les tailles</SelectItem>
-                            {availableSizes.map(s => (
-                              <SelectItem key={s} value={s}>
-                                {s.toUpperCase()}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
+                    <div className="space-y-2">
+                      {sellableVariants.map((v) => {
+                        const label =
+                          [v.size?.toUpperCase(), v.color].filter(Boolean).join(' / ') ||
+                          `Variante #${v.id}`;
 
-                    {availableColors.length > 0 && (
-                      <div className="space-y-1">
-                        <Label className="text-xs">Couleur</Label>
-                        <Select
-                          value={selectedColor || '__none__'}
-                          onValueChange={v => setSelectedColor(v === '__none__' ? '' : v)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Choisir une couleur" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">— Toutes les couleurs</SelectItem>
-                            {availableColors.map(c => (
-                              <SelectItem key={c} value={c}>{c}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
-
-                    {/* Variant chips summary */}
-                    <div className="flex flex-wrap gap-1 pt-1">
-                      {productVariants.filter(v => v.quantity > 0).map((v, idx) => {
-                        const isActive =
-                          (!selectedSize || v.size === selectedSize) &&
-                          (!selectedColor || v.color === selectedColor);
                         return (
-                          <span
-                            key={idx}
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium border transition-colors ${
-                              isActive
-                                ? 'border-blue-400 bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200'
-                                : 'border-slate-300 bg-slate-100 text-slate-500 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-400'
-                            }`}
+                          <div
+                            key={v.id}
+                            className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-3 py-2"
                           >
-                            <span className="font-semibold">{v.quantity}</span>
-                            {v.size && <span className="uppercase">{v.size}</span>}
-                            {v.color && <span>{v.color}</span>}
-                          </span>
+                            <div>
+                              <p className="text-sm font-medium">{label}</p>
+                              <p className="text-xs text-muted-foreground">
+                                Stock disponible : {v.quantity}
+                              </p>
+                            </div>
+
+                            <Input
+                              type="number"
+                              min="0"
+                              max={v.quantity}
+                              placeholder="0"
+                              value={variantQuantities[v.id] ?? ''}
+                              onChange={(e) =>
+                                handleVariantQtyChange(v.id, e.target.value, v.quantity)
+                              }
+                              className="w-20 text-right"
+                            />
+                          </div>
                         );
                       })}
                     </div>
+
+                    <p className="pt-1 text-xs text-muted-foreground">
+                      Total sélectionné : <strong>{totalVariantQty}</strong> unité(s)
+                    </p>
                   </div>
                 )}
 
-                {/* STOCK */}
-                {selectedProduct && (
+                {/* STOCK (produits sans variante) */}
+                {selectedProduct && !hasVariants && (
                   <div
                     className={`rounded-md p-3 text-sm ${
                       currentStock <= (selectedProduct.alert_threshold || 5)
@@ -917,14 +895,7 @@ export default function SalesPage() {
                         : 'bg-blue-50 text-blue-700'
                     }`}
                   >
-                    {hasVariants && (selectedSize || selectedColor) ? (
-                      <>
-                        Stock{selectedSize ? ` ${selectedSize.toUpperCase()}` : ''}{selectedColor ? ` ${selectedColor}` : ''} :{' '}
-                        <strong>{currentStock}</strong>
-                      </>
-                    ) : (
-                      <>Stock disponible : <strong>{currentStock}</strong></>
-                    )}
+                    Stock disponible : <strong>{currentStock}</strong>
                   </div>
                 )}
 
@@ -942,21 +913,23 @@ export default function SalesPage() {
                 </div>
 
                 {/* QTY + PRICE */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Quantité</Label>
+                <div className={hasVariants ? '' : 'grid grid-cols-2 gap-4'}>
+                  {!hasVariants && (
+                    <div className="space-y-2">
+                      <Label>Quantité</Label>
 
-                    <Input
-                      type="number"
-                      min="1"
-                      max={selectedProduct ? currentStock : undefined}
-                      value={quantity}
-                      onChange={(e) =>
-                        setQuantity(e.target.value)
-                      }
-                      required
-                    />
-                  </div>
+                      <Input
+                        type="number"
+                        min="1"
+                        max={selectedProduct ? currentStock : undefined}
+                        value={quantity}
+                        onChange={(e) =>
+                          setQuantity(e.target.value)
+                        }
+                        required
+                      />
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     <Label>
@@ -1064,7 +1037,7 @@ export default function SalesPage() {
                 )}
 
                 {/* TOTAL */}
-                {quantity && salePrice && (
+                {salePrice && (hasVariants ? totalVariantQty > 0 : !!quantity) && (
                   <div className="rounded-md border border-green-200 bg-green-50 p-3">
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium text-green-700">
@@ -1073,7 +1046,7 @@ export default function SalesPage() {
 
                       <span className="text-lg font-bold text-green-800">
                         {fmt(
-                          Number(quantity) *
+                          (hasVariants ? totalVariantQty : Number(quantity)) *
                             Number(salePrice)
                         )}{' '}
                         Ar
@@ -1088,7 +1061,7 @@ export default function SalesPage() {
                   disabled={
                     submitting ||
                     !selectedProduct ||
-                    currentStock <= 0
+                    (hasVariants ? totalVariantQty <= 0 : currentStock <= 0)
                   }
                 >
                   {submitting ? (

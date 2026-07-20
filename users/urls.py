@@ -12,6 +12,7 @@ from .views import (
     ProfitView,
     AdminMagasinProfitView,
     SaleViewSet,
+    BulkSaleView,
     MovementViewSet,
     AdminMagasinOverviewView,
     UsersByMagasinView,
@@ -60,6 +61,7 @@ urlpatterns = [
     # Role management
     path("role/<int:user_id>/", RoleManagementView.as_view()),
     # Totals and profit (prepended with sales/)
+    path("sales/bulk/", BulkSaleView.as_view()),
     path("sales/totals/", TotalsView.as_view()),
     path("sales/profit/", ProfitView.as_view()),
     path("sales/profit-by-magasins/", AdminMagasinProfitView.as_view()),
