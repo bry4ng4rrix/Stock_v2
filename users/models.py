@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.base_user import BaseUserManager
+from django.utils import timezone
 
 
 # =====================================================
@@ -51,6 +52,7 @@ class CustomUser(AbstractUser):
         ("admin", "Admin"),
         ("magasin", "Magasin"),
         ("employer", "Employer"),
+        ("platform_admin", "Platform Admin"),
     )
 
     full_name = models.CharField(max_length=255)
@@ -96,6 +98,101 @@ class AdminProfile(models.Model):
 
     def __str__(self):
         return self.company_name
+
+
+# =====================================================
+# SUBSCRIPTION (Label Technology billing/status)
+# =====================================================
+
+class Subscription(models.Model):
+
+    STATUS_CHOICES = (
+        ("active", "Actif"),
+        ("disabled", "Désactivé"),
+        ("pending", "En attente"),
+        ("trial", "Essai (1 mois)"),
+        ("demo", "Démo"),
+    )
+
+    admin_profile = models.OneToOneField(AdminProfile, on_delete=models.CASCADE, related_name="subscription")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    trial_ends_at = models.DateTimeField(null=True, blank=True)
+    updated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="subscription_updates")
+    notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Subscription"
+        verbose_name_plural = "Subscriptions"
+
+    def __str__(self):
+        return f"{self.admin_profile.company_name} - {self.status}"
+
+    @property
+    def is_currently_active(self):
+        if self.status in ("active", "demo"):
+            return True
+        if self.status == "trial":
+            return bool(self.trial_ends_at and self.trial_ends_at > timezone.now())
+        return False
+
+    @property
+    def days_left_in_trial(self):
+        if self.status != "trial" or not self.trial_ends_at:
+            return None
+        return max(0, (self.trial_ends_at - timezone.now()).days)
+
+
+# =====================================================
+# LOGIN EVENT (IP / device tracking for Label Technology)
+# =====================================================
+
+class LoginEvent(models.Model):
+
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="login_events")
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=500, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.ip_address} - {self.created_at}"
+
+
+# =====================================================
+# PLATFORM REQUEST (tenant -> Label Technology)
+# =====================================================
+
+class PlatformRequest(models.Model):
+
+    REQUEST_TYPES = (
+        ("device_deletion", "Suppression d'appareil"),
+        ("activation", "Activation d'abonnement"),
+    )
+    STATUS_CHOICES = (
+        ("pending", "En attente"),
+        ("approved", "Approuvée"),
+        ("rejected", "Rejetée"),
+    )
+
+    request_type = models.CharField(max_length=20, choices=REQUEST_TYPES)
+    admin_profile = models.ForeignKey(AdminProfile, on_delete=models.CASCADE, related_name="requests")
+    requested_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name="platform_requests")
+    login_event = models.ForeignKey(LoginEvent, on_delete=models.SET_NULL, null=True, blank=True, related_name="deletion_requests")
+    note = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    resolved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="resolved_requests")
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"[{self.get_request_type_display()}] {self.admin_profile.company_name} - {self.status}"
 
 
 # =====================================================
@@ -288,6 +385,7 @@ class Notification(models.Model):
         ("user", "User"),
         ("chat", "Chat"),
         ("transfer", "Transfer"),
+        ("movement", "Movement"),
         ("other", "Other"),
     )
 
@@ -297,6 +395,7 @@ class Notification(models.Model):
     magasin = models.ForeignKey(MagasinProfile, on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
     product = models.ForeignKey(Product, on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
+    movement = models.ForeignKey('Movement', on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
     user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="notifications")
 
     is_read = models.BooleanField(default=False)

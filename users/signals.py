@@ -40,8 +40,19 @@ def product_deleted(sender, instance: Product, **kwargs):
 
 @receiver(post_save, sender=Movement)
 def movement_created(sender, instance: Movement, created, **kwargs):
-    if created:
-        broadcast_data_event("movement", "created", instance)
+    if not created:
+        return
+    broadcast_data_event("movement", "created", instance)
+    try:
+        name = instance.product_name or instance.product.name
+        sign = "+" if instance.change > 0 else ""
+        who = instance.changed_by.full_name if instance.changed_by and instance.changed_by.full_name else (
+            instance.changed_by.username if instance.changed_by else "Système"
+        )
+        msg = f"{name} ({sign}{instance.change}) — {who}"
+        Notification.objects.create(notif_type="movement", message=msg, magasin=instance.magasin, movement=instance)
+    except Exception:
+        pass
 
 
 @receiver(post_delete, sender=Movement)

@@ -1,3 +1,8 @@
+from datetime import timedelta
+
+from django.db.models import Sum
+from django.db.models.functions import Coalesce
+from django.utils import timezone
 from rest_framework import serializers
 from .models import (
     CustomUser,
@@ -10,6 +15,9 @@ from .models import (
     Sale,
     Movement,
     ChatMessage,
+    Subscription,
+    LoginEvent,
+    PlatformRequest,
 )
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -49,7 +57,12 @@ class RegisterSerializer(serializers.ModelSerializer):
             user = CustomUser.objects.create(username=username, is_confirmed=True, **validated_data)
             user.set_password(password)
             user.save()
-            AdminProfile.objects.create(user=user, company_name=company_name)
+            admin_profile = AdminProfile.objects.create(user=user, company_name=company_name)
+            Subscription.objects.create(
+                admin_profile=admin_profile,
+                status="trial",
+                trial_ends_at=timezone.now() + timedelta(days=30),
+            )
             return user
         elif role == "magasin":
             try:
@@ -235,7 +248,7 @@ class NotificationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Notification
-        fields = ["id", "notif_type", "message", "magasin", "magasin_name", "product", "product_name", "sale", "sale_id", "user", "user_name", "is_read", "created_at"]
+        fields = ["id", "notif_type", "message", "magasin", "magasin_name", "product", "product_name", "sale", "sale_id", "movement", "user", "user_name", "is_read", "created_at"]
         read_only_fields = ["id", "created_at"]
 
 
@@ -251,6 +264,116 @@ class MagasinProfileSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if obj.shop_logo and request:
             return request.build_absolute_uri(obj.shop_logo.url)
+        return None
+
+
+class SubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Subscription
+        fields = ["id", "status", "trial_ends_at", "notes", "updated_at", "is_currently_active", "days_left_in_trial"]
+        read_only_fields = ["id", "updated_at", "is_currently_active", "days_left_in_trial"]
+
+
+class CompanySubscriptionSerializer(serializers.ModelSerializer):
+    admin_id = serializers.IntegerField(source="user.id", read_only=True)
+    admin_email = serializers.CharField(source="user.email", read_only=True)
+    admin_full_name = serializers.CharField(source="user.full_name", read_only=True)
+    admin_phone = serializers.CharField(source="user.phone", read_only=True)
+    logo = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    trial_ends_at = serializers.SerializerMethodField()
+    is_currently_active = serializers.SerializerMethodField()
+    days_left_in_trial = serializers.SerializerMethodField()
+    store_count = serializers.SerializerMethodField()
+    user_count = serializers.SerializerMethodField()
+    admin_count = serializers.SerializerMethodField()
+    total_stock = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AdminProfile
+        fields = [
+            "id", "company_name", "admin_id", "admin_email", "admin_full_name", "admin_phone",
+            "logo", "created_at", "status", "trial_ends_at", "is_currently_active",
+            "days_left_in_trial", "store_count", "user_count", "admin_count", "total_stock",
+        ]
+
+    def get_logo(self, obj):
+        request = self.context.get("request")
+        if obj.logo and request:
+            return request.build_absolute_uri(obj.logo.url)
+        return None
+
+    def _subscription(self, obj):
+        return getattr(obj, "subscription", None)
+
+    def get_status(self, obj):
+        sub = self._subscription(obj)
+        return sub.status if sub else "pending"
+
+    def get_trial_ends_at(self, obj):
+        sub = self._subscription(obj)
+        return sub.trial_ends_at if sub else None
+
+    def get_is_currently_active(self, obj):
+        sub = self._subscription(obj)
+        return sub.is_currently_active if sub else False
+
+    def get_days_left_in_trial(self, obj):
+        sub = self._subscription(obj)
+        return sub.days_left_in_trial if sub else None
+
+    def get_store_count(self, obj):
+        from .subscriptions import get_company_magasins
+        return get_company_magasins(obj.user).count()
+
+    def get_user_count(self, obj):
+        from .subscriptions import get_company_user_ids
+        return len(get_company_user_ids(obj.user))
+
+    def get_admin_count(self, obj):
+        from .subscriptions import get_company_admin_ids
+        return len(get_company_admin_ids(obj.user))
+
+    def get_total_stock(self, obj):
+        from .subscriptions import get_company_magasins
+        magasins = get_company_magasins(obj.user)
+        return Product.objects.filter(magasin__in=magasins).aggregate(
+            total=Coalesce(Sum('initial_quantity'), 0)
+        )['total']
+
+
+class LoginEventSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source="user.full_name", read_only=True)
+    user_email = serializers.CharField(source="user.email", read_only=True)
+    user_role = serializers.CharField(source="user.role", read_only=True)
+
+    class Meta:
+        model = LoginEvent
+        fields = ["id", "user_name", "user_email", "user_role", "ip_address", "user_agent", "created_at"]
+
+
+class PlatformRequestSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="admin_profile.company_name", read_only=True)
+    admin_profile_id = serializers.IntegerField(source="admin_profile.id", read_only=True)
+    requested_by_name = serializers.CharField(source="requested_by.full_name", read_only=True)
+    requested_by_email = serializers.CharField(source="requested_by.email", read_only=True)
+    device_info = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PlatformRequest
+        fields = [
+            "id", "request_type", "status", "note", "admin_profile_id", "company_name",
+            "requested_by_name", "requested_by_email", "device_info", "created_at", "resolved_at",
+        ]
+        read_only_fields = ["id", "status", "created_at", "resolved_at"]
+
+    def get_device_info(self, obj):
+        if obj.login_event:
+            return {
+                "login_event_id": obj.login_event_id,
+                "ip_address": obj.login_event.ip_address,
+                "user_agent": obj.login_event.user_agent,
+            }
         return None
 
 

@@ -51,9 +51,18 @@ export function LoginForm() {
       }
 
       toast.success('Connexion réussie !');
-      router.push('/dashboard');
+      if ((response.user as any).raw_role === 'platform_admin') {
+        router.push('/label');
+      } else {
+        router.push('/dashboard');
+      }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Erreur de connexion';
+      if (errorMsg.includes('Abonnement inactif')) {
+        router.push('/abonnement-expire');
+        setLoading(false);
+        return;
+      }
       toast.error(friendlyError(errorMsg));
     } finally {
       setLoading(false);

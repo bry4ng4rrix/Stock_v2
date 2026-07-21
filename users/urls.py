@@ -30,11 +30,23 @@ from .views import (
     TransferProductsView,
     BackupExportView,
     BackupImportView,
+    PlatformCompanyListView,
+    PlatformCompanyStatusUpdateView,
+    PlatformActivateAllView,
+    PlatformCompanyDetailView,
+    PlatformCompanyBackupView,
+    PlatformCompanyDevicesView,
+    PlatformMonitoringView,
+    MyCompanyDevicesView,
+    MyCompanySubscriptionView,
+    MyCompanyRequestsView,
+    PlatformRequestListView,
+    PlatformRequestResolveView,
+    PlatformExpiringSoonView,
 )
 
-from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.views import TokenViewBase
-from .authentication import CustomTokenObtainPairSerializer
+from .authentication import CustomTokenObtainPairSerializer, CustomTokenRefreshSerializer
 from rest_framework.routers import DefaultRouter
 
 router = DefaultRouter()
@@ -48,10 +60,13 @@ router.register(r"magasins", MagasinViewSet, basename="magasins")
 class CustomLoginView(TokenViewBase):
     serializer_class = CustomTokenObtainPairSerializer
 
+class CustomTokenRefreshView(TokenViewBase):
+    serializer_class = CustomTokenRefreshSerializer
+
 urlpatterns = [
     # Auth
     path("login/", CustomLoginView.as_view()),
-    path("refresh/", TokenRefreshView.as_view()),
+    path("refresh/", CustomTokenRefreshView.as_view()),
     # Register
     path("register/", RegisterView.as_view()),
     # My profile
@@ -91,5 +106,20 @@ urlpatterns = [
     path("chat/users/", ChatUsersListView.as_view()),
     path("chat/history/", ChatMessageHistoryView.as_view()),
     path('add-admin/', AddAdminView.as_view(), name='add-admin'),
+    # Platform admin (Label Technology)
+    path("platform-admin/companies/", PlatformCompanyListView.as_view()),
+    path("platform-admin/companies/activate-all/", PlatformActivateAllView.as_view()),
+    path("platform-admin/companies/<int:admin_profile_id>/status/", PlatformCompanyStatusUpdateView.as_view()),
+    path("platform-admin/companies/<int:admin_profile_id>/backup/", PlatformCompanyBackupView.as_view()),
+    path("platform-admin/companies/<int:admin_profile_id>/devices/", PlatformCompanyDevicesView.as_view()),
+    path("platform-admin/companies/<int:admin_profile_id>/", PlatformCompanyDetailView.as_view()),
+    path("platform-admin/monitoring/", PlatformMonitoringView.as_view()),
+    path("platform-admin/requests/", PlatformRequestListView.as_view()),
+    path("platform-admin/requests/<int:request_id>/", PlatformRequestResolveView.as_view()),
+    path("platform-admin/expiring-soon/", PlatformExpiringSoonView.as_view()),
+    # My company (tenant side)
+    path("my-company/devices/", MyCompanyDevicesView.as_view()),
+    path("my-company/subscription/", MyCompanySubscriptionView.as_view()),
+    path("my-company/requests/", MyCompanyRequestsView.as_view()),
 ] + router.urls
 

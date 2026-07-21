@@ -6,7 +6,7 @@ import { djangoClient } from '@/lib/django-client';
 export interface CurrentUser {
   id: number;
   email: string;
-  role: 'admin' | 'magasin' | 'employer';
+  role: 'admin' | 'magasin' | 'employer' | 'platform_admin';
   full_name: string;
   is_confirmed: boolean;
   phone?: string;
@@ -73,5 +73,6 @@ export function useCurrentUser() {
     isSuperAdmin: role === 'admin',
     isAdminOrSuperAdmin: role === 'admin' || role === 'magasin',
     isManager: role === 'admin' || role === 'magasin',
+    isPlatformOwner: role === 'platform_admin',
   };
 }

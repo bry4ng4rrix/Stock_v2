@@ -16,7 +16,7 @@ interface AuthResponse {
     email: string
     username: string
     full_name: string
-    role: 'admin' | 'magasin' | 'employer'
+    role: 'admin' | 'magasin' | 'employer' | 'platform_admin'
     is_confirmed: boolean
     store_id?: number
     magasin_id?: number
@@ -84,8 +84,13 @@ class DjangoAPIClient {
       })
 
       if (!response.ok) {
+        let blocked = false
+        try {
+          const err = await response.json()
+          if (err.code === 'subscription_inactive') blocked = true
+        } catch {}
         this.clearTokensFromStorage()
-        window.location.href = '/login'
+        window.location.href = blocked ? '/abonnement-expire' : '/login'
         return null
       }
 
@@ -256,20 +261,20 @@ class DjangoAPIClient {
   }
 
   // ==================== Blob Methods (for file downloads) ====================
-  private async requestBlob(endpoint: string): Promise<{ blob: Blob; filename: string }> {
+  private async requestBlob(endpoint: string, method: string = 'GET'): Promise<{ blob: Blob; filename: string }> {
     const url = `${API_BASE_URL}${endpoint}`
     const headers: Record<string, string> = {}
     if (this.tokens?.access) {
       headers['Authorization'] = `Bearer ${this.tokens.access}`
     }
 
-    let response = await fetch(url, { headers })
+    let response = await fetch(url, { method, headers })
 
     if (response.status === 401) {
       const newToken = await this.refreshAccessToken()
       if (!newToken) throw new Error('Authentication failed')
       headers['Authorization'] = `Bearer ${newToken}`
-      response = await fetch(url, { headers })
+      response = await fetch(url, { method, headers })
     }
 
     if (!response.ok) {
@@ -364,10 +369,11 @@ class DjangoAPIClient {
 
     getCurrentUser: async () => {
       const response = await this.get<any>('/users/me/')
-      let mappedRole: 'admin' | 'store_manager' | 'employee' = 'employee'
+      let mappedRole: 'admin' | 'store_manager' | 'employee' | 'platform_admin' = 'employee'
       if (response.role === 'admin') mappedRole = 'admin'
       else if (response.role === 'magasin') mappedRole = 'store_manager'
       else if (response.role === 'employer') mappedRole = 'employee'
+      else if (response.role === 'platform_admin') mappedRole = 'platform_admin'
 
       return {
         id: response.id,
@@ -646,6 +652,70 @@ class DjangoAPIClient {
       const query = urlParams.toString() ? `?${urlParams.toString()}` : ''
       return this.get<any[]>(`/users/chat/history/${query}`)
     }
+  }
+
+  // ==================== Platform Admin Service (Label Technology) ====================
+  platformAdmin = {
+    listCompanies: async () => {
+      return this.get<any[]>('/users/platform-admin/companies/')
+    },
+    createCompany: async (data: {
+      company_name: string
+      full_name: string
+      email: string
+      password: string
+      phone?: string
+      status?: string
+    }) => {
+      return this.post<any>('/users/platform-admin/companies/', data)
+    },
+    updateCompany: async (adminProfileId: number, data: { company_name?: string; admin_full_name?: string; admin_phone?: string }) => {
+      return this.patch<any>(`/users/platform-admin/companies/${adminProfileId}/`, data)
+    },
+    deleteCompany: async (adminProfileId: number) => {
+      return this.requestBlob(`/users/platform-admin/companies/${adminProfileId}/`, 'DELETE')
+    },
+    updateStatus: async (adminProfileId: number, status: string) => {
+      return this.patch<any>(`/users/platform-admin/companies/${adminProfileId}/status/`, { status })
+    },
+    activateAll: async () => {
+      return this.post<{ activated: number }>('/users/platform-admin/companies/activate-all/')
+    },
+    backupCompany: async (adminProfileId: number) => {
+      return this.requestBlob(`/users/platform-admin/companies/${adminProfileId}/backup/`)
+    },
+    getDevices: async (adminProfileId: number) => {
+      return this.get<any[]>(`/users/platform-admin/companies/${adminProfileId}/devices/`)
+    },
+    getMonitoring: async () => {
+      return this.get<any>('/users/platform-admin/monitoring/')
+    },
+    listRequests: async (statusFilter?: string) => {
+      const query = statusFilter ? `?status=${statusFilter}` : ''
+      return this.get<any[]>(`/users/platform-admin/requests/${query}`)
+    },
+    resolveRequest: async (requestId: number, action: 'approve' | 'reject') => {
+      return this.patch<any>(`/users/platform-admin/requests/${requestId}/`, { action })
+    },
+    getExpiringSoon: async () => {
+      return this.get<any[]>('/users/platform-admin/expiring-soon/')
+    },
+  }
+
+  // ==================== My Company Service (tenant side) ====================
+  myCompany = {
+    getDevices: async () => {
+      return this.get<any[]>('/users/my-company/devices/')
+    },
+    getSubscription: async () => {
+      return this.get<any>('/users/my-company/subscription/')
+    },
+    listRequests: async () => {
+      return this.get<any[]>('/users/my-company/requests/')
+    },
+    createRequest: async (data: { request_type: 'device_deletion' | 'activation'; login_event_id?: number; note?: string }) => {
+      return this.post<any>('/users/my-company/requests/', data)
+    },
   }
 
   // ==================== Token Status ====================

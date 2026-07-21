@@ -3,7 +3,11 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import zipfile
+
+import psutil
+import openpyxl
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -15,15 +19,17 @@ from django.db.models import Sum, F, DecimalField, Count, Value, Q
 from django.db.models.functions import Coalesce
 from django.db import transaction
 from django.utils import timezone
+from django.utils.text import slugify
 from django.http import HttpResponse
 from django.conf import settings
 from django.core.management import call_command
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
-from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification
-from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer
-from .permissions import IsAdmin
+from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest
+from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer
+from .permissions import IsAdmin, IsPlatformOwner
+from .subscriptions import get_company_magasins, get_company_user_ids, get_company_devices, get_subscription_owner, get_subscription
 from rest_framework_simplejwt.views import TokenViewBase
 from .authentication import CustomTokenObtainPairSerializer
 from .models import Notification
@@ -200,6 +206,11 @@ class AddAdminView(APIView):
             # Ensure role is admin
             new_admin.role = "admin"
             new_admin.save()
+            # This is a co-admin on an EXISTING company, never a new one:
+            # RegisterSerializer always creates an AdminProfile+Subscription for
+            # role="admin", but that would spuriously appear as its own company
+            # in the platform dashboard. Drop it (cascades to the Subscription).
+            AdminProfile.objects.filter(user=new_admin).delete()
             # Give the new admin the exact same access as the creator: every magasin
             # where the requester is the owner (admin FK) or a co-admin (admins M2M).
             current_admin = request.user
@@ -250,6 +261,428 @@ class ApproveUserView(APIView):
             return Response({"message": "Utilisateur approuvé"})
         except CustomUser.DoesNotExist:
             return Response({"error": "Utilisateur introuvable"}, status=404)
+
+# =========================
+# MY COMPANY (tenant side: devices, subscription, requests to Label Technology)
+# =========================
+class MyCompanyDevicesView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        owner = get_subscription_owner(request.user)
+        if not owner:
+            return Response({"error": "Société introuvable"}, status=404)
+        events = get_company_devices(owner)
+        return Response(LoginEventSerializer(events, many=True).data)
+
+
+class MyCompanySubscriptionView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        owner = get_subscription_owner(request.user)
+        sub = get_subscription(request.user)
+        if not sub:
+            return Response({"status": "pending", "trial_ends_at": None, "is_currently_active": False, "days_left_in_trial": None})
+        return Response({
+            "status": sub.status,
+            "trial_ends_at": sub.trial_ends_at,
+            "is_currently_active": sub.is_currently_active,
+            "days_left_in_trial": sub.days_left_in_trial,
+        })
+
+
+class MyCompanyRequestsView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        owner = get_subscription_owner(request.user)
+        if not owner:
+            return Response({"error": "Société introuvable"}, status=404)
+        reqs = PlatformRequest.objects.filter(admin_profile=owner.admin_profile).order_by("-created_at")
+        return Response(PlatformRequestSerializer(reqs, many=True).data)
+
+    def post(self, request):
+        owner = get_subscription_owner(request.user)
+        if not owner:
+            return Response({"error": "Société introuvable"}, status=404)
+
+        request_type = request.data.get("request_type")
+        if request_type not in dict(PlatformRequest.REQUEST_TYPES):
+            return Response({"error": "Type de demande invalide."}, status=400)
+
+        login_event = None
+        if request_type == "device_deletion":
+            login_event_id = request.data.get("login_event_id")
+            login_event = LoginEvent.objects.filter(id=login_event_id).first()
+            if not login_event or login_event.user_id not in get_company_user_ids(owner):
+                return Response({"error": "Appareil introuvable."}, status=404)
+            if PlatformRequest.objects.filter(login_event=login_event, status="pending").exists():
+                return Response({"error": "Une demande est déjà en attente pour cet appareil."}, status=400)
+
+        if request_type == "activation":
+            if PlatformRequest.objects.filter(
+                admin_profile=owner.admin_profile, request_type="activation", status="pending"
+            ).exists():
+                return Response({"error": "Une demande d'activation est déjà en attente."}, status=400)
+
+        req = PlatformRequest.objects.create(
+            request_type=request_type,
+            admin_profile=owner.admin_profile,
+            requested_by=request.user,
+            login_event=login_event,
+            note=request.data.get("note", ""),
+        )
+        return Response(PlatformRequestSerializer(req).data, status=201)
+
+
+# =========================
+# PLATFORM ADMIN (Label Technology)
+# =========================
+class PlatformCompanyListView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def get(self, request):
+        qs = AdminProfile.objects.select_related("user", "subscription").order_by("company_name")
+        serializer = CompanySubscriptionSerializer(qs, many=True, context={"request": request})
+        return Response(serializer.data)
+
+    def post(self, request):
+        data = request.data.copy()
+        data["role"] = "admin"
+        data.setdefault("username", data.get("email"))
+        serializer = RegisterSerializer(data=data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+
+        user = serializer.save()
+        user.role = "admin"
+        user.save()
+
+        magasin = MagasinProfile.objects.create(
+            admin=user, shop_name="Stock Local", description="Magasin pour les stocks locaux"
+        )
+        magasin.admins.add(user)
+
+        initial_status = request.data.get("status", "pending")
+        if initial_status not in dict(Subscription.STATUS_CHOICES):
+            initial_status = "pending"
+
+        sub = user.admin_profile.subscription
+        sub.status = initial_status
+        sub.trial_ends_at = timezone.now() + timedelta(days=30) if initial_status == "trial" else None
+        sub.updated_by = request.user
+        sub.save()
+
+        out = CompanySubscriptionSerializer(user.admin_profile, context={"request": request})
+        return Response(out.data, status=201)
+
+
+class PlatformCompanyStatusUpdateView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def patch(self, request, admin_profile_id):
+        try:
+            admin_profile = AdminProfile.objects.get(id=admin_profile_id)
+        except AdminProfile.DoesNotExist:
+            return Response({"error": "Société introuvable"}, status=404)
+
+        new_status = request.data.get("status")
+        if new_status not in dict(Subscription.STATUS_CHOICES):
+            return Response({"status": "Statut invalide."}, status=400)
+
+        sub, _ = Subscription.objects.get_or_create(admin_profile=admin_profile)
+        sub.status = new_status
+        sub.trial_ends_at = timezone.now() + timedelta(days=30) if new_status == "trial" else None
+        sub.updated_by = request.user
+        sub.save()
+
+        serializer = CompanySubscriptionSerializer(admin_profile, context={"request": request})
+        return Response(serializer.data)
+
+
+class PlatformActivateAllView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def post(self, request):
+        missing = AdminProfile.objects.filter(subscription__isnull=True)
+        Subscription.objects.bulk_create([
+            Subscription(admin_profile=ap, status="active", updated_by=request.user)
+            for ap in missing
+        ])
+        count = Subscription.objects.exclude(status="active").update(
+            status="active", trial_ends_at=None, updated_by=request.user, updated_at=timezone.now()
+        )
+        return Response({"activated": count})
+
+
+class PlatformCompanyDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def patch(self, request, admin_profile_id):
+        try:
+            admin_profile = AdminProfile.objects.get(id=admin_profile_id)
+        except AdminProfile.DoesNotExist:
+            return Response({"error": "Société introuvable"}, status=404)
+
+        company_name = request.data.get("company_name")
+        full_name = request.data.get("admin_full_name")
+        phone = request.data.get("admin_phone")
+
+        if company_name:
+            admin_profile.company_name = company_name
+            admin_profile.save()
+
+        if full_name or phone is not None:
+            user = admin_profile.user
+            if full_name:
+                user.full_name = full_name
+            if phone is not None:
+                user.phone = phone
+            user.save()
+
+        out = CompanySubscriptionSerializer(admin_profile, context={"request": request})
+        return Response(out.data)
+
+    def delete(self, request, admin_profile_id):
+        try:
+            admin_profile = AdminProfile.objects.get(id=admin_profile_id)
+        except AdminProfile.DoesNotExist:
+            return Response({"error": "Société introuvable"}, status=404)
+
+        buffer, filename = _build_company_backup_zip(admin_profile)
+
+        admin_user = admin_profile.user
+        magasins = list(get_company_magasins(admin_user))
+        user_ids = get_company_user_ids(admin_user)
+
+        for mp in magasins:
+            mp.delete()
+        CustomUser.objects.filter(id__in=user_ids).delete()
+
+        response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+
+def _build_company_backup_zip(admin_profile):
+    """Build a zip (data.json + donnees.xlsx + media/) containing every record
+    belonging to this company. Returns (BytesIO, filename)."""
+    admin_user = admin_profile.user
+    magasins = get_company_magasins(admin_user)
+    user_ids = get_company_user_ids(admin_user)
+
+    products = Product.objects.filter(magasin__in=magasins)
+    sales = Sale.objects.filter(magasin__in=magasins)
+    movements = Movement.objects.filter(magasin__in=magasins)
+    users = CustomUser.objects.filter(id__in=user_ids)
+
+    payload = {
+        "company_name": admin_profile.company_name,
+        "exported_at": timezone.now().isoformat(),
+        "products": ProductSerializer(products, many=True).data,
+        "sales": SaleSerializer(sales, many=True).data,
+        "movements": MovementSerializer(movements, many=True).data,
+        "magasins": MagasinProfileSerializer(magasins, many=True).data,
+        "users": [
+            {
+                "id": u.id, "full_name": u.full_name, "email": u.email,
+                "role": u.role, "phone": u.phone, "is_confirmed": u.is_confirmed,
+            }
+            for u in users
+        ],
+    }
+
+    wb = openpyxl.Workbook()
+    ws_products = wb.active
+    ws_products.title = "Produits"
+    ws_products.append(["ID", "Nom", "Référence", "Marque", "Catégorie", "Stock", "Prix achat", "Prix vente", "Magasin"])
+    for p in products.select_related("magasin"):
+        ws_products.append([
+            p.id, p.name, p.reference, p.brand or "", p.category,
+            p.initial_quantity, float(p.purchase_price or 0), float(p.unit_price or 0),
+            p.magasin.shop_name if p.magasin else "",
+        ])
+
+    ws_sales = wb.create_sheet("Ventes")
+    ws_sales.append(["ID", "Produit", "Quantité", "Prix vente", "Total", "Client", "Vendeur", "Magasin", "Date"])
+    for s in sales.select_related("product", "seller", "magasin"):
+        ws_sales.append([
+            s.id, s.product.name if s.product else "", s.quantity, float(s.sale_price or 0),
+            float(s.total_price or 0), s.customer_name or "",
+            s.seller.full_name if s.seller else "", s.magasin.shop_name if s.magasin else "",
+            s.sold_at.isoformat() if s.sold_at else "",
+        ])
+
+    ws_movements = wb.create_sheet("Mouvements")
+    ws_movements.append(["ID", "Produit", "Variation", "Stock avant", "Stock après", "Utilisateur", "Magasin", "Date"])
+    for m in movements.select_related("product", "changed_by", "magasin"):
+        ws_movements.append([
+            m.id, m.product_name or (m.product.name if m.product else ""), m.change,
+            m.previous_quantity, m.new_quantity,
+            m.changed_by.full_name if m.changed_by else "",
+            m.magasin.shop_name if m.magasin else "",
+            m.created_at.isoformat() if m.created_at else "",
+        ])
+
+    ws_users = wb.create_sheet("Utilisateurs")
+    ws_users.append(["ID", "Nom", "Email", "Rôle", "Téléphone", "Confirmé"])
+    for u in users:
+        ws_users.append([u.id, u.full_name, u.email, u.role, u.phone or "", u.is_confirmed])
+
+    excel_buffer = io.BytesIO()
+    wb.save(excel_buffer)
+    excel_buffer.seek(0)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("data.json", json.dumps(payload, indent=2, default=str))
+        zf.writestr("donnees.xlsx", excel_buffer.getvalue())
+
+        image_fields = []
+        if admin_profile.logo:
+            image_fields.append(admin_profile.logo)
+        for mp in magasins:
+            if mp.shop_logo:
+                image_fields.append(mp.shop_logo)
+        for p in products:
+            for field in (p.image1, p.image2, p.image3, p.qr_code):
+                if field:
+                    image_fields.append(field)
+
+        for field in image_fields:
+            try:
+                if os.path.isfile(field.path):
+                    zf.write(field.path, os.path.join("media", field.name))
+            except Exception:
+                continue
+
+    buffer.seek(0)
+    slug = slugify(admin_profile.company_name) or f"societe-{admin_profile.id}"
+    filename = f"{slug}_{timezone.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    return buffer, filename
+
+
+class PlatformCompanyBackupView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def get(self, request, admin_profile_id):
+        try:
+            admin_profile = AdminProfile.objects.get(id=admin_profile_id)
+        except AdminProfile.DoesNotExist:
+            return Response({"error": "Société introuvable"}, status=404)
+
+        buffer, filename = _build_company_backup_zip(admin_profile)
+        response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+
+class PlatformCompanyDevicesView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def get(self, request, admin_profile_id):
+        try:
+            admin_profile = AdminProfile.objects.get(id=admin_profile_id)
+        except AdminProfile.DoesNotExist:
+            return Response({"error": "Société introuvable"}, status=404)
+
+        events = get_company_devices(admin_profile.user)
+        return Response(LoginEventSerializer(events, many=True).data)
+
+
+class PlatformMonitoringView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def get(self, request):
+        t0 = time.monotonic()
+        cpu = psutil.cpu_percent(interval=0.1)
+        mem = psutil.virtual_memory()
+        disk = shutil.disk_usage(settings.BASE_DIR)
+
+        db_engine = settings.DATABASES["default"]["ENGINE"]
+        db_size = None
+        if db_engine.endswith("sqlite3"):
+            db_path = settings.DATABASES["default"]["NAME"]
+            if os.path.isfile(db_path):
+                db_size = os.path.getsize(db_path)
+
+        return Response({
+            "cpu_percent": cpu,
+            "ram_used": mem.used,
+            "ram_total": mem.total,
+            "ram_percent": mem.percent,
+            "disk_used": disk.used,
+            "disk_total": disk.total,
+            "disk_percent": round(disk.used / disk.total * 100, 1) if disk.total else 0,
+            "db_size_bytes": db_size,
+            "server_time": timezone.now().isoformat(),
+            "process_time_ms": round((time.monotonic() - t0) * 1000, 2),
+        })
+
+
+class PlatformRequestListView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def get(self, request):
+        qs = PlatformRequest.objects.select_related("admin_profile", "requested_by", "login_event")
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return Response(PlatformRequestSerializer(qs, many=True).data)
+
+
+class PlatformRequestResolveView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def patch(self, request, request_id):
+        try:
+            req = PlatformRequest.objects.get(id=request_id)
+        except PlatformRequest.DoesNotExist:
+            return Response({"error": "Demande introuvable"}, status=404)
+
+        action = request.data.get("action")
+        if action not in ("approve", "reject"):
+            return Response({"error": "Action invalide."}, status=400)
+        if req.status != "pending":
+            return Response({"error": "Cette demande a déjà été traitée."}, status=400)
+
+        if action == "approve":
+            if req.request_type == "device_deletion" and req.login_event:
+                req.login_event.delete()
+                req.login_event = None
+            elif req.request_type == "activation":
+                sub, _ = Subscription.objects.get_or_create(admin_profile=req.admin_profile)
+                sub.status = "active"
+                sub.trial_ends_at = None
+                sub.updated_by = request.user
+                sub.save()
+            req.status = "approved"
+        else:
+            req.status = "rejected"
+
+        req.resolved_by = request.user
+        req.resolved_at = timezone.now()
+        req.save()
+        return Response(PlatformRequestSerializer(req).data)
+
+
+class PlatformExpiringSoonView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+    THRESHOLD_DAYS = 3
+
+    def get(self, request):
+        qs = AdminProfile.objects.select_related("user", "subscription").filter(
+            subscription__status="trial"
+        )
+        expiring = [
+            ap for ap in qs
+            if ap.subscription.days_left_in_trial is not None
+            and ap.subscription.days_left_in_trial <= self.THRESHOLD_DAYS
+        ]
+        out = CompanySubscriptionSerializer(expiring, many=True, context={"request": request})
+        return Response(out.data)
+
 
 # =========================
 # MY PROFILE
