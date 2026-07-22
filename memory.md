@@ -168,3 +168,40 @@ minimal et non sensible :
   automatique ou par Label Technology").
 - Frontend : `label/demandes/page.tsx` affiche désormais aussi
   `payment_reference` entre parenthèses à côté du moyen de paiement.
+
+## 2026-07-22 (suite 4) — Modifier/supprimer les messages du chat + envoi de fiche produit
+
+**Prompt utilisateur :**
+> Dans le chat, ajouter la modification et la suppression des messages, puis
+> ajouter l'envoi d'informations produit : un bouton + qui affiche un champ
+> de recherche de produits, puis envoie les informations.
+
+**Modifications apportées :**
+- Backend : `ChatMessage` gagne `product` (FK `Product`, nullable),
+  `is_edited`, `edited_at`, `is_deleted` (suppression douce : le contenu est
+  vidé mais la ligne reste, pour ne pas casser l'ordre de la conversation ni
+  laisser les clients déconnectés dans l'ignorance). Migration appliquée.
+- Backend (`users/consumers.py`, `ChatConsumer`) : `receive()` gère
+  maintenant un champ `action` (`send` par défaut, `edit`, `delete`) au lieu
+  de ne traiter que `{content}`. Seul l'auteur d'un message peut le modifier
+  ou le supprimer (vérifié côté serveur via `sender_id`, avec re-vérification
+  que le message appartient bien à la room courante). `save_message` accepte
+  un `product_id` optionnel, vérifie qu'il appartient à une boutique de la
+  société de l'expéditeur, et construit un contenu de repli
+  (`"Produit : {nom}"`) si aucun texte n'est fourni. Les événements diffusés
+  portent désormais un discriminant `"type"` (`message` / `message_edited` /
+  `message_deleted`) — absent auparavant, ce qui aurait rendu la distinction
+  ambiguë côté frontend.
+- Backend : `ChatMessageSerializer` expose `product`, `is_edited`,
+  `edited_at`, `is_deleted` (utilisé par l'historique REST au chargement).
+- Frontend (`app/(app)/chats/page.tsx`) :
+  - Un menu "..." (au survol, message propre uniquement) propose
+    Modifier/Supprimer ; l'édition se fait en ligne dans la bulle, la
+    suppression demande confirmation (`confirm()`).
+  - Les messages supprimés affichent un placeholder "Message supprimé" ; les
+    messages modifiés affichent "· modifié" à côté de l'heure.
+  - Un bouton "+" à côté du champ de saisie ouvre un `Popover` avec un champ
+    de recherche produit (filtré côté client sur nom/référence via
+    `djangoClient.products.list()`) ; cliquer un résultat envoie le message
+    en cours (éventuellement vide) avec la fiche produit attachée, affichée
+    sous forme de mini-carte dans la bulle (nom, référence, prix).

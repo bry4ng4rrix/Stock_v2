@@ -3,18 +3,25 @@
 import { useState, useEffect, useRef } from 'react';
 import { useCurrentUser } from '@/lib/auth/useCurrentUser';
 import { djangoClient } from '@/lib/django-client';
-import { 
-  Send, 
-  Search, 
-  Users, 
-  Hash, 
-  MessageSquare, 
-  Circle, 
-  Store, 
-  Shield, 
+import {
+  Send,
+  Search,
+  Users,
+  Hash,
+  MessageSquare,
+  Circle,
+  Store,
+  Shield,
   Loader2,
   AlertCircle,
   ArrowLeft,
+  Plus,
+  MoreVertical,
+  Pencil,
+  Trash2,
+  Check,
+  X,
+  Package,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -23,6 +30,13 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from 'sonner';
 
 interface ChatUser {
@@ -31,6 +45,14 @@ interface ChatUser {
   email: string;
   role: 'admin' | 'magasin' | 'employer';
   shop_name?: string;
+}
+
+interface ChatProductSnapshot {
+  id: number;
+  name: string;
+  reference: string;
+  category: string;
+  unit_price: string;
 }
 
 interface ChatMessage {
@@ -44,6 +66,10 @@ interface ChatMessage {
   recipient_email: string | null;
   room_name: string;
   content: string;
+  product?: ChatProductSnapshot | null;
+  is_edited?: boolean;
+  edited_at?: string | null;
+  is_deleted?: boolean;
   timestamp: string;
 }
 
@@ -60,7 +86,17 @@ export default function ChatsPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loadingHistory, setLoadingHistory] = useState(false);
-  
+
+  // Edit message state
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingContent, setEditingContent] = useState('');
+
+  // Product picker state ("+" button)
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
+  const [allProducts, setAllProducts] = useState<any[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
   const [mobileShowChat, setMobileShowChat] = useState(false);
@@ -167,7 +203,27 @@ export default function ChatsPage() {
 
       ws.onmessage = (event) => {
         try {
-          const receivedData: ChatMessage = JSON.parse(event.data);
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'message_edited') {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === data.id
+                  ? { ...m, content: data.content, is_edited: data.is_edited, edited_at: data.edited_at }
+                  : m
+              )
+            );
+            return;
+          }
+
+          if (data.type === 'message_deleted') {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === data.id ? { ...m, is_deleted: true, content: '' } : m))
+            );
+            return;
+          }
+
+          const receivedData: ChatMessage = data;
           setMessages((prev) => {
             // Avoid duplicates
             if (prev.some((m) => m.id === receivedData.id)) return prev;
@@ -230,6 +286,72 @@ export default function ChatsPage() {
     socketRef.current.send(JSON.stringify(payload));
     setNewMessage('');
   };
+
+  // Edit message logic
+  const startEditMessage = (msg: ChatMessage) => {
+    setEditingId(msg.id);
+    setEditingContent(msg.content);
+  };
+
+  const cancelEditMessage = () => {
+    setEditingId(null);
+    setEditingContent('');
+  };
+
+  const saveEditMessage = () => {
+    if (!editingId || !editingContent.trim() || !socketRef.current || socketStatus !== 'connected') return;
+    socketRef.current.send(JSON.stringify({
+      action: 'edit',
+      message_id: editingId,
+      content: editingContent.trim(),
+    }));
+    setEditingId(null);
+    setEditingContent('');
+  };
+
+  // Delete message logic
+  const handleDeleteMessage = (messageId: number) => {
+    if (!socketRef.current || socketStatus !== 'connected') return;
+    if (!confirm('Supprimer ce message ?')) return;
+    socketRef.current.send(JSON.stringify({ action: 'delete', message_id: messageId }));
+  };
+
+  // Product picker ("+" button) logic
+  const openProductPicker = async () => {
+    setProductPickerOpen(true);
+    if (allProducts.length === 0) {
+      setLoadingProducts(true);
+      try {
+        const data = await djangoClient.products.list();
+        setAllProducts(data);
+      } catch (err) {
+        console.error('Error fetching products:', err);
+        toast.error('Impossible de charger les produits.');
+      } finally {
+        setLoadingProducts(false);
+      }
+    }
+  };
+
+  const handlePickProduct = (product: any) => {
+    if (!socketRef.current || socketStatus !== 'connected') return;
+    socketRef.current.send(JSON.stringify({
+      content: newMessage.trim(),
+      product_id: product.id,
+    }));
+    setNewMessage('');
+    setProductPickerOpen(false);
+    setProductSearch('');
+  };
+
+  const filteredProducts = allProducts.filter((p) => {
+    const term = productSearch.toLowerCase();
+    return (
+      !term ||
+      p.name?.toLowerCase().includes(term) ||
+      p.reference?.toLowerCase().includes(term)
+    );
+  });
 
   // Suggestions list
   const quickSuggestions = [
@@ -604,11 +726,12 @@ export default function ChatsPage() {
                   {messages.map((msg, index) => {
                     const isOwnMessage = msg.sender === currentUser.id;
                     const showSenderName = !isOwnMessage && (index === 0 || messages[index - 1].sender !== msg.sender);
-                    
+                    const isEditing = editingId === msg.id;
+
                     return (
-                      <div 
+                      <div
                         key={msg.id || index}
-                        className={`flex flex-col ${isOwnMessage ? 'items-end' : 'items-start'}`}
+                        className={`flex flex-col group ${isOwnMessage ? 'items-end' : 'items-start'}`}
                       >
                         {/* Sender info */}
                         {showSenderName && (
@@ -619,23 +742,115 @@ export default function ChatsPage() {
                             </span>
                           </span>
                         )}
-                        
+
                         {/* Bubble */}
                         <div className="max-w-[85%] sm:max-w-[75%] md:max-w-[65%] flex flex-col">
-                          <div className={`p-2.5 sm:p-3 text-xs sm:text-sm shadow-sm rounded-2xl ${
-                            isOwnMessage 
-                              ? 'bg-primary text-primary-foreground rounded-tr-sm' 
-                              : 'bg-muted text-foreground rounded-tl-sm'
-                          }`}>
-                            <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                          <div className="flex items-end gap-1">
+                            {isOwnMessage && !msg.is_deleted && !isEditing && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-muted shrink-0 order-first"
+                                  >
+                                    <MoreVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => startEditMessage(msg)}>
+                                    <Pencil className="h-3.5 w-3.5 mr-2" />
+                                    Modifier
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="text-red-600 focus:text-red-600"
+                                    onClick={() => handleDeleteMessage(msg.id)}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                    Supprimer
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+
+                            {isEditing ? (
+                              <div className="flex items-center gap-1.5 min-w-[220px]">
+                                <Input
+                                  autoFocus
+                                  value={editingContent}
+                                  onChange={(e) => setEditingContent(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') saveEditMessage();
+                                    if (e.key === 'Escape') cancelEditMessage();
+                                  }}
+                                  className="h-8 text-xs rounded-xl bg-background"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={saveEditMessage}
+                                  className="p-1.5 rounded-md bg-primary text-primary-foreground shrink-0"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelEditMessage}
+                                  className="p-1.5 rounded-md hover:bg-muted shrink-0"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className={`p-2.5 sm:p-3 text-xs sm:text-sm shadow-sm rounded-2xl ${
+                                msg.is_deleted
+                                  ? 'bg-transparent border border-dashed text-muted-foreground italic'
+                                  : isOwnMessage
+                                    ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                                    : 'bg-muted text-foreground rounded-tl-sm'
+                              }`}>
+                                {msg.is_deleted ? (
+                                  <p className="flex items-center gap-1.5">
+                                    <Trash2 className="h-3 w-3" />
+                                    Message supprimé
+                                  </p>
+                                ) : (
+                                  <>
+                                    {msg.product && (
+                                      <div className={`flex items-center gap-2 rounded-xl p-2 mb-1.5 ${
+                                        isOwnMessage ? 'bg-primary-foreground/10' : 'bg-background'
+                                      }`}>
+                                        <div className={`p-1.5 rounded-lg shrink-0 ${
+                                          isOwnMessage ? 'bg-primary-foreground/10' : 'bg-primary/10'
+                                        }`}>
+                                          <Package className={`h-4 w-4 ${isOwnMessage ? 'text-primary-foreground' : 'text-primary'}`} />
+                                        </div>
+                                        <div className="min-w-0">
+                                          <p className="font-semibold text-xs truncate">{msg.product.name}</p>
+                                          <p className={`text-[10px] truncate ${
+                                            isOwnMessage ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                                          }`}>
+                                            Réf. {msg.product.reference} · {msg.product.unit_price} Ar
+                                          </p>
+                                        </div>
+                                      </div>
+                                    )}
+                                    {msg.content && (
+                                      <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            )}
                           </div>
-                          
+
                           {/* Timestamp */}
-                          <span className={`text-[9px] text-muted-foreground/70 mt-1 select-none px-1 ${
-                            isOwnMessage ? 'text-right' : 'text-left'
-                          }`}>
-                            {formatTime(msg.timestamp)}
-                          </span>
+                          {!isEditing && (
+                            <span className={`text-[9px] text-muted-foreground/70 mt-1 select-none px-1 ${
+                              isOwnMessage ? 'text-right' : 'text-left'
+                            }`}>
+                              {formatTime(msg.timestamp)}
+                              {msg.is_edited && !msg.is_deleted ? ' · modifié' : ''}
+                            </span>
+                          )}
                         </div>
                       </div>
                     );
@@ -666,6 +881,62 @@ export default function ChatsPage() {
 
             {/* Input message form */}
             <form onSubmit={handleSendMessage} className="flex gap-2 items-end">
+              <Popover open={productPickerOpen} onOpenChange={setProductPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={socketStatus !== 'connected'}
+                    onClick={openProductPicker}
+                    className="rounded-2xl h-10 w-10 sm:h-11 sm:w-11 shrink-0"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" side="top" className="w-80 p-0">
+                  <div className="p-2 border-b">
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                      <Input
+                        autoFocus
+                        placeholder="Rechercher un produit..."
+                        value={productSearch}
+                        onChange={(e) => setProductSearch(e.target.value)}
+                        className="pl-8 h-9 rounded-xl text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto p-1">
+                    {loadingProducts ? (
+                      <div className="flex items-center justify-center p-6">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : filteredProducts.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center p-6">Aucun produit trouvé</p>
+                    ) : (
+                      filteredProducts.slice(0, 30).map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => handlePickProduct(p)}
+                          className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-muted text-left transition-colors"
+                        >
+                          <div className="p-1.5 rounded-lg bg-primary/10 shrink-0">
+                            <Package className="h-4 w-4 text-primary" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-medium truncate">{p.name}</p>
+                            <p className="text-[10px] text-muted-foreground truncate">
+                              Réf. {p.reference} · {p.unit_price} Ar
+                            </p>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
               <Input
                 placeholder="Rédiger votre message..."
                 value={newMessage}
@@ -673,8 +944,8 @@ export default function ChatsPage() {
                 disabled={socketStatus !== 'connected'}
                 className="flex-1 rounded-2xl min-h-10 h-10 sm:h-11 text-sm bg-background border-input"
               />
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 disabled={!newMessage.trim() || socketStatus !== 'connected'}
                 className="rounded-2xl h-10 sm:h-11 w-10 sm:w-auto sm:px-4 flex items-center justify-center shrink-0 active:scale-95 transition-transform"
               >

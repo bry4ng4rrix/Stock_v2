@@ -459,6 +459,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     sender_role = serializers.CharField(source="sender.role", read_only=True)
     recipient_name = serializers.CharField(source="recipient.full_name", read_only=True)
     recipient_email = serializers.CharField(source="recipient.email", read_only=True)
+    product = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatMessage
@@ -473,6 +474,21 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "recipient_email",
             "room_name",
             "content",
+            "product",
+            "is_edited",
+            "edited_at",
+            "is_deleted",
             "timestamp",
         ]
         read_only_fields = ["id", "timestamp"]
+
+    def get_product(self, obj):
+        if not obj.product:
+            return None
+        return {
+            "id": obj.product.id,
+            "name": obj.product.name,
+            "reference": obj.product.reference,
+            "category": obj.product.category,
+            "unit_price": str(obj.product.unit_price),
+        }

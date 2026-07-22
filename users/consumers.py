@@ -28,6 +28,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not my_magasin_ids:
             await self.close()
             return
+        self.my_magasin_ids = my_magasin_ids
 
         # 2. Get room name: could be 'general' or 'dm_<user1_id>_<user2_id>'
         room_list = query_params.get("room")
@@ -84,15 +85,44 @@ class ChatConsumer(AsyncWebsocketConsumer):
             data = json.loads(text_data)
         except json.JSONDecodeError:
             return
-            
-        content = data.get("content")
-        if not content:
+
+        action = data.get("action", "send")
+
+        if action == "edit":
+            message_id = data.get("message_id")
+            content = data.get("content")
+            if not message_id or not content:
+                return
+            updated = await self.edit_message(message_id, content)
+            if updated is None:
+                return
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "chat_message_edited", "message": updated}
+            )
             return
-            
-        # Save message to database
-        saved_msg = await self.save_message(self.user, self.recipient, self.room_name, content)
-        
-        # Broadcast to room group
+
+        if action == "delete":
+            message_id = data.get("message_id")
+            if not message_id:
+                return
+            deleted = await self.remove_message(message_id)
+            if deleted is None:
+                return
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {"type": "chat_message_deleted", "message": deleted}
+            )
+            return
+
+        # Default action: send a new message, optionally attaching a product.
+        content = data.get("content") or ""
+        product_id = data.get("product_id")
+        if not content and not product_id:
+            return
+
+        saved_msg = await self.save_message(self.user, self.recipient, self.room_name, content, product_id)
+
         await self.channel_layer.group_send(
             self.room_group_name,
             {
@@ -100,11 +130,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "message": saved_msg
             }
         )
-        
+
     async def chat_message(self, event):
-        # Send message to WebSocket
-        await self.send(text_data=json.dumps(event["message"]))
-        
+        await self.send(text_data=json.dumps({"type": "message", **event["message"]}))
+
+    async def chat_message_edited(self, event):
+        await self.send(text_data=json.dumps({"type": "message_edited", **event["message"]}))
+
+    async def chat_message_deleted(self, event):
+        await self.send(text_data=json.dumps({"type": "message_deleted", **event["message"]}))
+
     @database_sync_to_async
     def get_user_from_token(self, token_str):
         try:
@@ -131,14 +166,33 @@ class ChatConsumer(AsyncWebsocketConsumer):
         from users.views import get_company_id
         return get_company_id(user)
 
+    @staticmethod
+    def _product_snapshot(product):
+        if not product:
+            return None
+        return {
+            "id": product.id,
+            "name": product.name,
+            "reference": product.reference,
+            "category": product.category,
+            "unit_price": str(product.unit_price),
+        }
+
     @database_sync_to_async
-    def save_message(self, sender, recipient, room_name, content):
-        from users.models import ChatMessage
+    def save_message(self, sender, recipient, room_name, content, product_id=None):
+        from users.models import ChatMessage, Product
+        product = None
+        if product_id:
+            product = Product.objects.filter(id=product_id, magasin_id__in=self.my_magasin_ids).first()
+        if not content:
+            content = f"Produit : {product.name}" if product else ""
+
         msg = ChatMessage.objects.create(
             sender=sender,
             recipient=recipient,
             room_name=room_name,
-            content=content
+            content=content,
+            product=product,
         )
         return {
             "id": msg.id,
@@ -151,7 +205,49 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "recipient_email": recipient.email if recipient else None,
             "room_name": room_name,
             "content": content,
+            "is_edited": False,
+            "is_deleted": False,
+            "product": self._product_snapshot(product),
             "timestamp": msg.timestamp.isoformat()
+        }
+
+    @database_sync_to_async
+    def edit_message(self, message_id, content):
+        from django.utils import timezone
+        from users.models import ChatMessage
+        try:
+            msg = ChatMessage.objects.get(id=message_id, room_name=self.room_name)
+        except ChatMessage.DoesNotExist:
+            return None
+        if msg.sender_id != self.user.id or msg.is_deleted:
+            return None
+        msg.content = content
+        msg.is_edited = True
+        msg.edited_at = timezone.now()
+        msg.save(update_fields=["content", "is_edited", "edited_at"])
+        return {
+            "id": msg.id,
+            "room_name": msg.room_name,
+            "content": msg.content,
+            "is_edited": True,
+            "edited_at": msg.edited_at.isoformat(),
+        }
+
+    @database_sync_to_async
+    def remove_message(self, message_id):
+        from users.models import ChatMessage
+        try:
+            msg = ChatMessage.objects.get(id=message_id, room_name=self.room_name)
+        except ChatMessage.DoesNotExist:
+            return None
+        if msg.sender_id != self.user.id:
+            return None
+        msg.is_deleted = True
+        msg.content = ""
+        msg.save(update_fields=["is_deleted", "content"])
+        return {
+            "id": msg.id,
+            "room_name": msg.room_name,
         }
 
 

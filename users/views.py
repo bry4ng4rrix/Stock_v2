@@ -2509,7 +2509,7 @@ class ChatMessageHistoryView(APIView):
 
         # Take last 100 messages
         total_count = messages.count()
-        messages = messages[max(0, total_count - 100):]
+        messages = messages.select_related("product")[max(0, total_count - 100):]
         serializer = ChatMessageSerializer(messages, many=True)
         return Response(serializer.data)
 

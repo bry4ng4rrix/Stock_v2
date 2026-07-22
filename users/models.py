@@ -525,6 +525,10 @@ class ChatMessage(models.Model):
     recipient = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="received_chat_messages", null=True, blank=True)
     room_name = models.CharField(max_length=100, default="general")
     content = models.TextField()
+    product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True, related_name="chat_mentions")
+    is_edited = models.BooleanField(default=False)
+    edited_at = models.DateTimeField(null=True, blank=True)
+    is_deleted = models.BooleanField(default=False)
     timestamp = models.DateTimeField(auto_now_add=True)
 
     class Meta:
