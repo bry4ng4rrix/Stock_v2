@@ -36,6 +36,9 @@ from .views import (
     PlatformCompanyDetailView,
     PlatformCompanyBackupView,
     PlatformCompanyDevicesView,
+    PlatformCompanyOfferAssignView,
+    PlatformOfferListView,
+    PlatformOfferDetailView,
     PlatformMonitoringView,
     MyCompanyDevicesView,
     MyCompanySubscriptionView,
@@ -43,6 +46,9 @@ from .views import (
     PlatformRequestListView,
     PlatformRequestResolveView,
     PlatformExpiringSoonView,
+    PublicOfferListView,
+    PublicVerifyAccountView,
+    PublicPaymentRequestView,
 )
 
 from rest_framework_simplejwt.views import TokenViewBase
@@ -112,7 +118,10 @@ urlpatterns = [
     path("platform-admin/companies/<int:admin_profile_id>/status/", PlatformCompanyStatusUpdateView.as_view()),
     path("platform-admin/companies/<int:admin_profile_id>/backup/", PlatformCompanyBackupView.as_view()),
     path("platform-admin/companies/<int:admin_profile_id>/devices/", PlatformCompanyDevicesView.as_view()),
+    path("platform-admin/companies/<int:admin_profile_id>/offer/", PlatformCompanyOfferAssignView.as_view()),
     path("platform-admin/companies/<int:admin_profile_id>/", PlatformCompanyDetailView.as_view()),
+    path("platform-admin/offers/", PlatformOfferListView.as_view()),
+    path("platform-admin/offers/<int:offer_id>/", PlatformOfferDetailView.as_view()),
     path("platform-admin/monitoring/", PlatformMonitoringView.as_view()),
     path("platform-admin/requests/", PlatformRequestListView.as_view()),
     path("platform-admin/requests/<int:request_id>/", PlatformRequestResolveView.as_view()),
@@ -121,5 +130,9 @@ urlpatterns = [
     path("my-company/devices/", MyCompanyDevicesView.as_view()),
     path("my-company/subscription/", MyCompanySubscriptionView.as_view()),
     path("my-company/requests/", MyCompanyRequestsView.as_view()),
+    # Public (unauthenticated — subscription-expired page)
+    path("public/offers/", PublicOfferListView.as_view()),
+    path("public/verify-account/", PublicVerifyAccountView.as_view()),
+    path("public/payment-request/", PublicPaymentRequestView.as_view()),
 ] + router.urls
 

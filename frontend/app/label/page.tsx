@@ -129,7 +129,12 @@ export default function LabelDashboardPage() {
   // Devices dialog
   const [devicesTarget, setDevicesTarget] = useState<any | null>(null);
   const [devices, setDevices] = useState<any[]>([]);
+  const [deviceLimit, setDeviceLimit] = useState<{ count: number; limit: number } | null>(null);
   const [devicesLoading, setDevicesLoading] = useState(false);
+  const [deletingDeviceId, setDeletingDeviceId] = useState<number | null>(null);
+
+  // Offers catalog (for assignment dropdown)
+  const [offers, setOffers] = useState<any[]>([]);
 
   // Backup in progress
   const [backingUp, setBackingUp] = useState<number | null>(null);
@@ -149,6 +154,7 @@ export default function LabelDashboardPage() {
 
   useEffect(() => {
     fetchData();
+    djangoClient.platformAdmin.listOffers().then(setOffers).catch(() => {});
   }, [fetchData]);
 
   const filtered = useMemo(() => {
@@ -295,12 +301,44 @@ export default function LabelDashboardPage() {
     setDevicesLoading(true);
     try {
       const data = await djangoClient.platformAdmin.getDevices(c.id);
-      setDevices(data);
+      setDevices(data.devices);
+      setDeviceLimit({ count: data.count, limit: data.limit });
     } catch (err) {
       console.error(err);
       toast.error("Erreur lors du chargement des appareils");
     } finally {
       setDevicesLoading(false);
+    }
+  };
+
+  const handleDeleteDevice = async (deviceId: number) => {
+    if (!devicesTarget) return;
+    setDeletingDeviceId(deviceId);
+    try {
+      await djangoClient.platformAdmin.deleteDevice(devicesTarget.id, deviceId);
+      toast.success("Appareil supprimé");
+      openDevices(devicesTarget);
+      fetchData();
+    } catch (err: any) {
+      toast.error(err.message || "Erreur lors de la suppression");
+    } finally {
+      setDeletingDeviceId(null);
+    }
+  };
+
+  const handleAssignOffer = async (adminProfileId: number, offerId: string) => {
+    setUpdating(adminProfileId);
+    try {
+      const updated = await djangoClient.platformAdmin.assignOffer(
+        adminProfileId,
+        offerId === "none" ? null : Number(offerId),
+      );
+      setCompanies((prev) => prev.map((c) => (c.id === adminProfileId ? updated : c)));
+      toast.success("Offre assignée");
+    } catch (err: any) {
+      toast.error(err.message || "Erreur lors de l'assignation");
+    } finally {
+      setUpdating(null);
     }
   };
 
@@ -508,6 +546,20 @@ export default function LabelDashboardPage() {
                     <Shield className="h-3 w-3" />
                     {c.admin_count} admin{c.admin_count > 1 ? "s" : ""}
                   </Badge>
+                  <Badge
+                    variant="outline"
+                    className={`font-normal flex items-center gap-1 ${
+                      c.device_count >= c.max_devices ? "bg-red-50 text-red-700" : ""
+                    }`}
+                  >
+                    <Smartphone className="h-3 w-3" />
+                    {c.device_count} / {c.max_devices} appareils
+                  </Badge>
+                  {c.offer_name && (
+                    <Badge variant="outline" className="font-normal bg-indigo-50 text-indigo-700">
+                      {c.offer_name}
+                    </Badge>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 text-center text-sm">
@@ -532,7 +584,7 @@ export default function LabelDashboardPage() {
                   </div>
                 </div>
 
-                <div className="mt-auto pt-2">
+                <div className="mt-auto pt-2 space-y-2">
                   <Select
                     value=""
                     onValueChange={(v) => handleStatusChange(c.id, v)}
@@ -545,6 +597,23 @@ export default function LabelDashboardPage() {
                       {STATUS_OPTIONS.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                           {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={c.offer_id ? String(c.offer_id) : "none"}
+                    onValueChange={(v) => handleAssignOffer(c.id, v)}
+                    disabled={updating === c.id}
+                  >
+                    <SelectTrigger className="w-full h-8 text-xs">
+                      <SelectValue placeholder="Offre d'abonnement" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Aucune offre (limite par défaut)</SelectItem>
+                      {offers.map((o) => (
+                        <SelectItem key={o.id} value={String(o.id)}>
+                          {o.name} — {o.max_devices} appareils
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -704,11 +773,19 @@ export default function LabelDashboardPage() {
       >
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>
-              Appareils connectés — {devicesTarget?.company_name}
+            <DialogTitle className="flex items-center justify-between gap-2 pr-6">
+              <span>Appareils connectés — {devicesTarget?.company_name}</span>
+              {deviceLimit && (
+                <Badge
+                  variant="outline"
+                  className={deviceLimit.count >= deviceLimit.limit ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-700"}
+                >
+                  {deviceLimit.count} / {deviceLimit.limit}
+                </Badge>
+              )}
             </DialogTitle>
             <DialogDescription>
-              20 dernières connexions des utilisateurs de cette société
+              Appareils enregistrés pour les utilisateurs de cette société
             </DialogDescription>
           </DialogHeader>
           {devicesLoading ? (
@@ -719,7 +796,7 @@ export default function LabelDashboardPage() {
             </div>
           ) : devices.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              Aucune connexion enregistrée
+              Aucun appareil enregistré
             </p>
           ) : (
             <div className="max-h-96 overflow-y-auto space-y-2">
@@ -736,14 +813,25 @@ export default function LabelDashboardPage() {
                       </span>
                     </p>
                     <p className="text-xs text-muted-foreground truncate max-w-xs">
-                      {d.user_agent}
+                      {d.label || d.user_agent}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="font-mono text-xs">{d.ip_address || "-"}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(d.created_at).toLocaleString("fr-FR")}
-                    </p>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <p className="font-mono text-xs">{d.ip_address || "-"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(d.last_seen).toLocaleString("fr-FR")}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-red-600 hover:text-red-700"
+                      disabled={deletingDeviceId === d.id}
+                      onClick={() => handleDeleteDevice(d.id)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 </div>
               ))}

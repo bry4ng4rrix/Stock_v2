@@ -11,6 +11,7 @@ interface AuthTokens {
 interface AuthResponse {
   access: string
   refresh: string
+  device_status?: 'new' | 'known' | null
   user: {
     id: number
     email: string
@@ -323,17 +324,20 @@ class DjangoAPIClient {
     },
 
     login: async (email: string, password: string) => {
-      const response = await this.post<{ access: string; refresh: string }>('/users/login/', {
+      const { getOrCreateDeviceId } = await import('./device')
+      const response = await this.post<{ access: string; refresh: string; device_status?: 'new' | 'known' | null }>('/users/login/', {
         email: email,
         password,
+        device_id: getOrCreateDeviceId(),
       })
       this.saveTokensToStorage({ access: response.access, refresh: response.refresh })
       const user = await this.auth.getCurrentUser()
-      
+
       return {
         access: response.access,
         refresh: response.refresh,
         user,
+        device_status: response.device_status,
       } as unknown as AuthResponse
     },
 
@@ -361,7 +365,12 @@ class DjangoAPIClient {
       }
 
       if (typeof window !== 'undefined') {
+        // Preserve the device_id across logout: it must stay stable for this
+        // browser so the next login is recognized as the same registered
+        // device instead of being counted as a brand new one.
+        const deviceId = localStorage.getItem('device_id')
         localStorage.clear()
+        if (deviceId) localStorage.setItem('device_id', deviceId)
       }
 
       this.tokens = null
@@ -685,7 +694,13 @@ class DjangoAPIClient {
       return this.requestBlob(`/users/platform-admin/companies/${adminProfileId}/backup/`)
     },
     getDevices: async (adminProfileId: number) => {
-      return this.get<any[]>(`/users/platform-admin/companies/${adminProfileId}/devices/`)
+      return this.get<{ devices: any[]; count: number; limit: number }>(`/users/platform-admin/companies/${adminProfileId}/devices/`)
+    },
+    deleteDevice: async (adminProfileId: number, deviceId: number) => {
+      return this.delete<void>(`/users/platform-admin/companies/${adminProfileId}/devices/?device_id=${deviceId}`)
+    },
+    assignOffer: async (adminProfileId: number, offerId: number | null) => {
+      return this.patch<any>(`/users/platform-admin/companies/${adminProfileId}/offer/`, { offer_id: offerId })
     },
     getMonitoring: async () => {
       return this.get<any>('/users/platform-admin/monitoring/')
@@ -700,12 +715,25 @@ class DjangoAPIClient {
     getExpiringSoon: async () => {
       return this.get<any[]>('/users/platform-admin/expiring-soon/')
     },
+    // Subscription offers catalog
+    listOffers: async () => {
+      return this.get<any[]>('/users/platform-admin/offers/')
+    },
+    createOffer: async (data: { name: string; price: number; max_devices: number; is_active?: boolean }) => {
+      return this.post<any>('/users/platform-admin/offers/', data)
+    },
+    updateOffer: async (offerId: number, data: Partial<{ name: string; price: number; max_devices: number; is_active: boolean }>) => {
+      return this.patch<any>(`/users/platform-admin/offers/${offerId}/`, data)
+    },
+    deleteOffer: async (offerId: number) => {
+      return this.delete<void>(`/users/platform-admin/offers/${offerId}/`)
+    },
   }
 
   // ==================== My Company Service (tenant side) ====================
   myCompany = {
     getDevices: async () => {
-      return this.get<any[]>('/users/my-company/devices/')
+      return this.get<{ devices: any[]; count: number; limit: number }>('/users/my-company/devices/')
     },
     getSubscription: async () => {
       return this.get<any>('/users/my-company/subscription/')
@@ -713,8 +741,34 @@ class DjangoAPIClient {
     listRequests: async () => {
       return this.get<any[]>('/users/my-company/requests/')
     },
-    createRequest: async (data: { request_type: 'device_deletion' | 'activation'; login_event_id?: number; note?: string }) => {
+    createRequest: async (data: { request_type: 'device_deletion' | 'activation'; device_id?: number; login_event_id?: number; note?: string }) => {
       return this.post<any>('/users/my-company/requests/', data)
+    },
+  }
+
+  // ==================== Public Service (no auth — subscription-expired page) ====================
+  public = {
+    listOffers: async () => {
+      return this.get<any[]>('/users/public/offers/')
+    },
+    verifyAccount: async (data: { email: string; password: string }) => {
+      return this.post<{
+        email: string
+        full_name: string
+        role: string
+        is_admin: boolean
+        company_name: string
+      }>('/users/public/verify-account/', data)
+    },
+    createPaymentRequest: async (data: {
+      email: string
+      password: string
+      offer_id: number
+      payment_method: 'mvola' | 'paypal' | 'visa' | 'mastercard'
+      payment_reference: string
+      note?: string
+    }) => {
+      return this.post<any>('/users/public/payment-request/', data)
     },
   }
 

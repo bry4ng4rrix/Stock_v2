@@ -16,8 +16,10 @@ from .models import (
     Movement,
     ChatMessage,
     Subscription,
+    SubscriptionOffer,
     LoginEvent,
     PlatformRequest,
+    Device,
 )
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -288,6 +290,10 @@ class CompanySubscriptionSerializer(serializers.ModelSerializer):
     user_count = serializers.SerializerMethodField()
     admin_count = serializers.SerializerMethodField()
     total_stock = serializers.SerializerMethodField()
+    offer_id = serializers.SerializerMethodField()
+    offer_name = serializers.SerializerMethodField()
+    max_devices = serializers.SerializerMethodField()
+    device_count = serializers.SerializerMethodField()
 
     class Meta:
         model = AdminProfile
@@ -295,6 +301,7 @@ class CompanySubscriptionSerializer(serializers.ModelSerializer):
             "id", "company_name", "admin_id", "admin_email", "admin_full_name", "admin_phone",
             "logo", "created_at", "status", "trial_ends_at", "is_currently_active",
             "days_left_in_trial", "store_count", "user_count", "admin_count", "total_stock",
+            "offer_id", "offer_name", "max_devices", "device_count",
         ]
 
     def get_logo(self, obj):
@@ -341,6 +348,21 @@ class CompanySubscriptionSerializer(serializers.ModelSerializer):
             total=Coalesce(Sum('initial_quantity'), 0)
         )['total']
 
+    def get_offer_id(self, obj):
+        sub = self._subscription(obj)
+        return sub.offer_id if sub else None
+
+    def get_offer_name(self, obj):
+        sub = self._subscription(obj)
+        return sub.offer.name if sub and sub.offer else None
+
+    def get_max_devices(self, obj):
+        sub = self._subscription(obj)
+        return sub.max_devices if sub else Subscription.DEFAULT_DEVICE_LIMIT
+
+    def get_device_count(self, obj):
+        return Device.objects.filter(admin_profile=obj).count()
+
 
 class LoginEventSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source="user.full_name", read_only=True)
@@ -352,22 +374,76 @@ class LoginEventSerializer(serializers.ModelSerializer):
         fields = ["id", "user_name", "user_email", "user_role", "ip_address", "user_agent", "created_at"]
 
 
+class DeviceSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source="user.full_name", read_only=True)
+    user_email = serializers.CharField(source="user.email", read_only=True)
+    user_role = serializers.CharField(source="user.role", read_only=True)
+
+    class Meta:
+        model = Device
+        fields = [
+            "id", "user_name", "user_email", "user_role", "label",
+            "ip_address", "user_agent", "first_seen", "last_seen",
+        ]
+
+
+class SubscriptionOfferSerializer(serializers.ModelSerializer):
+    subscriptions_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SubscriptionOffer
+        fields = ["id", "name", "price", "max_devices", "is_active", "subscriptions_count", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_subscriptions_count(self, obj):
+        return obj.subscriptions.count()
+
+    def validate_name(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("Le nom de l'offre est obligatoire.")
+        return value
+
+    def validate_price(self, value):
+        if value is None or value < 0:
+            raise serializers.ValidationError("Le prix doit être un nombre positif.")
+        return value
+
+    def validate_max_devices(self, value):
+        if value is None or value < 1:
+            raise serializers.ValidationError("Le nombre d'appareils connectés doit être au moins 1.")
+        return value
+
+
 class PlatformRequestSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source="admin_profile.company_name", read_only=True)
     admin_profile_id = serializers.IntegerField(source="admin_profile.id", read_only=True)
     requested_by_name = serializers.CharField(source="requested_by.full_name", read_only=True)
     requested_by_email = serializers.CharField(source="requested_by.email", read_only=True)
     device_info = serializers.SerializerMethodField()
+    offer_name = serializers.SerializerMethodField()
+    payment_method_label = serializers.CharField(source="get_payment_method_display", read_only=True)
 
     class Meta:
         model = PlatformRequest
         fields = [
             "id", "request_type", "status", "note", "admin_profile_id", "company_name",
-            "requested_by_name", "requested_by_email", "device_info", "created_at", "resolved_at",
+            "requested_by_name", "requested_by_email", "device_info", "offer_name",
+            "payment_method", "payment_method_label", "payment_reference", "contact_email",
+            "created_at", "resolved_at",
         ]
         read_only_fields = ["id", "status", "created_at", "resolved_at"]
 
+    def get_offer_name(self, obj):
+        return obj.offer.name if obj.offer else None
+
     def get_device_info(self, obj):
+        if obj.device:
+            return {
+                "device_id": obj.device_id,
+                "ip_address": obj.device.ip_address,
+                "user_agent": obj.device.user_agent,
+            }
         if obj.login_event:
             return {
                 "login_event_id": obj.login_event_id,

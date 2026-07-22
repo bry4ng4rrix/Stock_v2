@@ -101,6 +101,28 @@ class AdminProfile(models.Model):
 
 
 # =====================================================
+# SUBSCRIPTION OFFER (Label Technology plan catalog)
+# =====================================================
+
+class SubscriptionOffer(models.Model):
+
+    name = models.CharField(max_length=255)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    max_devices = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Offre d'abonnement"
+        verbose_name_plural = "Offres d'abonnement"
+        ordering = ["price"]
+
+    def __str__(self):
+        return f"{self.name} ({self.price})"
+
+
+# =====================================================
 # SUBSCRIPTION (Label Technology billing/status)
 # =====================================================
 
@@ -114,8 +136,11 @@ class Subscription(models.Model):
         ("demo", "Démo"),
     )
 
+    DEFAULT_DEVICE_LIMIT = 3
+
     admin_profile = models.OneToOneField(AdminProfile, on_delete=models.CASCADE, related_name="subscription")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    offer = models.ForeignKey(SubscriptionOffer, on_delete=models.SET_NULL, null=True, blank=True, related_name="subscriptions")
     trial_ends_at = models.DateTimeField(null=True, blank=True)
     updated_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="subscription_updates")
     notes = models.TextField(blank=True, null=True)
@@ -142,6 +167,12 @@ class Subscription(models.Model):
         if self.status != "trial" or not self.trial_ends_at:
             return None
         return max(0, (self.trial_ends_at - timezone.now()).days)
+
+    @property
+    def max_devices(self):
+        if self.offer:
+            return self.offer.max_devices
+        return self.DEFAULT_DEVICE_LIMIT
 
 
 # =====================================================
@@ -171,17 +202,33 @@ class PlatformRequest(models.Model):
     REQUEST_TYPES = (
         ("device_deletion", "Suppression d'appareil"),
         ("activation", "Activation d'abonnement"),
+        ("payment", "Paiement direct"),
     )
     STATUS_CHOICES = (
         ("pending", "En attente"),
         ("approved", "Approuvée"),
         ("rejected", "Rejetée"),
     )
+    PAYMENT_METHOD_CHOICES = (
+        ("mvola", "MVola"),
+        ("paypal", "PayPal"),
+        ("visa", "Visa"),
+        ("mastercard", "Mastercard"),
+    )
 
     request_type = models.CharField(max_length=20, choices=REQUEST_TYPES)
     admin_profile = models.ForeignKey(AdminProfile, on_delete=models.CASCADE, related_name="requests")
     requested_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name="platform_requests")
     login_event = models.ForeignKey(LoginEvent, on_delete=models.SET_NULL, null=True, blank=True, related_name="deletion_requests")
+    device = models.ForeignKey("Device", on_delete=models.SET_NULL, null=True, blank=True, related_name="deletion_requests")
+    offer = models.ForeignKey(SubscriptionOffer, on_delete=models.SET_NULL, null=True, blank=True, related_name="payment_requests")
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, blank=True, null=True)
+    # Meaning depends on payment_method: MVola phone number, PayPal account
+    # email, or cardholder name for Visa/Mastercard (raw card number/CVV are
+    # never collected here — there is no PCI-compliant gateway behind this
+    # yet, see PublicPaymentRequestView).
+    payment_reference = models.CharField(max_length=255, blank=True, null=True)
+    contact_email = models.EmailField(blank=True, null=True)
     note = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     resolved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="resolved_requests")
@@ -193,6 +240,32 @@ class PlatformRequest(models.Model):
 
     def __str__(self):
         return f"[{self.get_request_type_display()}] {self.admin_profile.company_name} - {self.status}"
+
+
+# =====================================================
+# DEVICE (registered device slot, counted against the
+# subscription's offer device limit)
+# =====================================================
+
+class Device(models.Model):
+
+    admin_profile = models.ForeignKey(AdminProfile, on_delete=models.CASCADE, related_name="devices")
+    user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="devices")
+    device_id = models.CharField(max_length=100)
+    label = models.CharField(max_length=255, blank=True, null=True)
+    user_agent = models.CharField(max_length=500, blank=True, null=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    first_seen = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Appareil connecté"
+        verbose_name_plural = "Appareils connectés"
+        unique_together = ("admin_profile", "device_id")
+        ordering = ["-last_seen"]
+
+    def __str__(self):
+        return f"{self.label or self.device_id} - {self.admin_profile.company_name}"
 
 
 # =====================================================

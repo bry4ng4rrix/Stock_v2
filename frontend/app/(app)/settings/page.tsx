@@ -72,6 +72,7 @@ export default function SettingsPage() {
   const [subscription, setSubscription] = useState<any | null>(null);
   const [myRequests, setMyRequests] = useState<any[]>([]);
   const [devices, setDevices] = useState<any[]>([]);
+  const [deviceLimit, setDeviceLimit] = useState<{ count: number; limit: number } | null>(null);
   const [subLoading, setSubLoading] = useState(false);
   const [requestingActivation, setRequestingActivation] = useState(false);
   const [requestingDeviceId, setRequestingDeviceId] = useState<number | null>(null);
@@ -95,7 +96,8 @@ export default function SettingsPage() {
       ]);
       setSubscription(sub);
       setMyRequests(reqs);
-      setDevices(devs);
+      setDevices(devs.devices);
+      setDeviceLimit({ count: devs.count, limit: devs.limit });
     } catch (err) {
       console.error(err);
     } finally {
@@ -127,7 +129,7 @@ export default function SettingsPage() {
   const handleRequestDeviceDeletion = async (deviceId: number) => {
     setRequestingDeviceId(deviceId);
     try {
-      await djangoClient.myCompany.createRequest({ request_type: 'device_deletion', login_event_id: deviceId });
+      await djangoClient.myCompany.createRequest({ request_type: 'device_deletion', device_id: deviceId });
       toast.success('Demande de suppression envoyée à Label Technology');
       fetchSubscriptionData();
     } catch (err: any) {
@@ -140,7 +142,7 @@ export default function SettingsPage() {
   const pendingDeviceRequestIds = new Set(
     myRequests
       .filter((r) => r.request_type === 'device_deletion' && r.status === 'pending')
-      .map((r) => r.device_info?.login_event_id)
+      .map((r) => r.device_info?.device_id)
   );
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -441,21 +443,39 @@ export default function SettingsPage() {
           <TabsContent value="devices">
             <Card>
               <CardHeader>
-                <CardTitle>Appareils connectés</CardTitle>
-                <CardDescription>Dernières connexions des comptes de votre société</CardDescription>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <CardTitle>Appareils connectés</CardTitle>
+                    <CardDescription>Appareils enregistrés pour les comptes de votre société</CardDescription>
+                  </div>
+                  {deviceLimit && (
+                    <Badge
+                      variant="outline"
+                      className={deviceLimit.count >= deviceLimit.limit ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}
+                    >
+                      {deviceLimit.count} / {deviceLimit.limit} appareils
+                    </Badge>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
+                {deviceLimit && deviceLimit.count >= deviceLimit.limit && (
+                  <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3 mb-4">
+                    Limite d'appareils atteinte. Supprimez un appareil ci-dessous ou contactez
+                    Label Technology pour augmenter votre offre.
+                  </p>
+                )}
                 {subLoading && devices.length === 0 ? (
                   <Skeleton className="h-24 w-full" />
                 ) : devices.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Aucune connexion enregistrée</p>
+                  <p className="text-sm text-muted-foreground">Aucun appareil enregistré</p>
                 ) : (
                   <div className="space-y-2">
                     {devices.map((d) => (
                       <div key={d.id} className="flex items-center justify-between border rounded-md p-3 text-sm">
                         <div>
                           <p className="font-medium">{d.user_name} <span className="text-xs text-muted-foreground">({d.user_role})</span></p>
-                          <p className="text-xs text-muted-foreground truncate max-w-xs">{d.user_agent}</p>
+                          <p className="text-xs text-muted-foreground truncate max-w-xs">{d.label || d.user_agent}</p>
                           <p className="text-xs text-muted-foreground font-mono">{d.ip_address}</p>
                         </div>
                         <Button

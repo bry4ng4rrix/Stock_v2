@@ -1,14 +1,22 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { djangoClient } from '@/lib/django-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { Loader2, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Mail, Lock, Eye, EyeOff, MonitorSmartphone } from 'lucide-react';
 
 const ERRORS: Record<string, string> = {
   'Invalid login credentials':    'Email ou mot de passe incorrect.',
@@ -31,11 +39,23 @@ function friendlyError(msg: string) {
 
 export function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw]     = useState(false);
   const [loading, setLoading]   = useState(false);
+  const [newDeviceOpen, setNewDeviceOpen] = useState(false);
+  const [pendingRedirect, setPendingRedirect] = useState<string | null>(null);
+
+  useEffect(() => {
+    const prefill = searchParams.get('email');
+    if (prefill) setEmail(prefill);
+  }, [searchParams]);
+
+  const goTo = (path: string) => {
+    router.push(path);
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,15 +71,25 @@ export function LoginForm() {
       }
 
       toast.success('Connexion réussie !');
-      if ((response.user as any).raw_role === 'platform_admin') {
-        router.push('/label');
-      } else {
-        router.push('/dashboard');
+      const destination = (response.user as any).raw_role === 'platform_admin' ? '/label' : '/dashboard';
+
+      if (response.device_status === 'new') {
+        setPendingRedirect(destination);
+        setNewDeviceOpen(true);
+        setLoading(false);
+        return;
       }
+
+      goTo(destination);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Erreur de connexion';
       if (errorMsg.includes('Abonnement inactif')) {
-        router.push('/abonnement-expire');
+        router.push(`/abonnement-expire?email=${encodeURIComponent(email)}`);
+        setLoading(false);
+        return;
+      }
+      if (errorMsg.includes('Limite d\'appareils atteinte')) {
+        toast.error(errorMsg, { duration: 8000 });
         setLoading(false);
         return;
       }
@@ -67,6 +97,11 @@ export function LoginForm() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const confirmNewDevice = () => {
+    setNewDeviceOpen(false);
+    if (pendingRedirect) goTo(pendingRedirect);
   };
 
   return (
@@ -148,6 +183,24 @@ export function LoginForm() {
           </Link>
         </p>
       </CardContent>
+
+      <Dialog open={newDeviceOpen} onOpenChange={(open) => !open && confirmNewDevice()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MonitorSmartphone className="h-5 w-5 text-blue-600" />
+              Nouvel appareil détecté
+            </DialogTitle>
+            <DialogDescription>
+              Cet appareil ou ce navigateur se connecte pour la première fois à ce compte.
+              Il vient d'être enregistré parmi les appareils autorisés de votre société.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={confirmNewDevice}>Confirmer et continuer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { Building2, Activity, Inbox, Menu, X, LogOut } from 'lucide-react';
+import { Building2, Activity, Inbox, Menu, X, LogOut, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { djangoClient } from '@/lib/django-client';
@@ -39,6 +39,7 @@ export function LabelSidebar() {
   const navigationItems = [
     { label: 'Sociétés', href: '/label', icon: Building2, count: expiringSoon },
     { label: 'Demandes', href: '/label/demandes', icon: Inbox, count: pendingRequests },
+    { label: 'Offres', href: '/label/offres', icon: Tag, count: 0 },
     { label: 'Monitoring', href: '/label/monitoring', icon: Activity, count: 0 },
   ];
 

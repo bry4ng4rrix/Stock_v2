@@ -5,7 +5,9 @@ from .models import (
     CustomUser,
     AdminProfile,
     MagasinProfile,
-    EmployerProfile
+    EmployerProfile,
+    Device,
+    SubscriptionOffer,
 )
 
 
@@ -175,3 +177,48 @@ class EmployerProfileAdmin(admin.ModelAdmin):
     )
 
     ordering = ("-created_at",)
+
+
+# =========================================
+# DEVICE
+# =========================================
+
+@admin.register(Device)
+class DeviceAdmin(admin.ModelAdmin):
+
+    list_display = (
+        "id",
+        "admin_profile",
+        "user",
+        "label",
+        "ip_address",
+        "last_seen",
+    )
+
+    search_fields = (
+        "admin_profile__company_name",
+        "user__email",
+        "device_id",
+    )
+
+    list_filter = ("last_seen",)
+    ordering = ("-last_seen",)
+
+
+# =========================================
+# SUBSCRIPTION OFFER
+# =========================================
+
+@admin.register(SubscriptionOffer)
+class SubscriptionOfferAdmin(admin.ModelAdmin):
+
+    list_display = (
+        "id",
+        "name",
+        "price",
+        "max_devices",
+        "is_active",
+    )
+
+    search_fields = ("name",)
+    ordering = ("price",)

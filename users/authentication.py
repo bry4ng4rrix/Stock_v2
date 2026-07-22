@@ -3,7 +3,7 @@ from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import LoginEvent, CustomUser
-from .subscriptions import is_login_allowed, BLOCKED_MESSAGE, get_client_ip
+from .subscriptions import is_login_allowed, BLOCKED_MESSAGE, get_client_ip, get_or_register_device
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -24,15 +24,32 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             )
 
         request = self.context.get("request")
+        ip_address = get_client_ip(request) if request else None
+        user_agent = request.META.get("HTTP_USER_AGENT", "")[:500] if request else ""
+
         if request is not None:
             try:
                 LoginEvent.objects.create(
                     user=self.user,
-                    ip_address=get_client_ip(request),
-                    user_agent=request.META.get("HTTP_USER_AGENT", "")[:500],
+                    ip_address=ip_address,
+                    user_agent=user_agent,
                 )
             except Exception:
                 pass
+
+        device_id = (request.data.get("device_id") if request is not None else None) or None
+        device, created, limit_exceeded = get_or_register_device(self.user, device_id, ip_address, user_agent)
+
+        if limit_exceeded:
+            from .subscriptions import get_device_limit_info
+            count, limit = get_device_limit_info(self.user)
+            raise AuthenticationFailed(
+                f"Limite d'appareils atteinte ({count}/{limit}). "
+                "Supprimez un appareil existant ou contactez Label Technology pour augmenter votre offre.",
+                code="device_limit_exceeded",
+            )
+
+        data["device_status"] = "new" if created else ("known" if device else None)
 
         return data
 

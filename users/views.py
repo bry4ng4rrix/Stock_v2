@@ -11,7 +11,7 @@ import openpyxl
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status, viewsets, serializers
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser
@@ -26,10 +26,10 @@ from django.core.management import call_command
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
-from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest
-from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer
+from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest, Device, SubscriptionOffer
+from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer, DeviceSerializer, SubscriptionOfferSerializer
 from .permissions import IsAdmin, IsPlatformOwner
-from .subscriptions import get_company_magasins, get_company_user_ids, get_company_devices, get_subscription_owner, get_subscription
+from .subscriptions import get_company_magasins, get_company_user_ids, get_company_devices, get_subscription_owner, get_subscription, get_device_limit_info
 from rest_framework_simplejwt.views import TokenViewBase
 from .authentication import CustomTokenObtainPairSerializer
 from .models import Notification
@@ -272,8 +272,13 @@ class MyCompanyDevicesView(APIView):
         owner = get_subscription_owner(request.user)
         if not owner:
             return Response({"error": "Société introuvable"}, status=404)
-        events = get_company_devices(owner)
-        return Response(LoginEventSerializer(events, many=True).data)
+        devices = Device.objects.filter(admin_profile=owner.admin_profile).select_related("user")
+        count, limit = get_device_limit_info(request.user)
+        return Response({
+            "devices": DeviceSerializer(devices, many=True).data,
+            "count": count,
+            "limit": limit,
+        })
 
 
 class MyCompanySubscriptionView(APIView):
@@ -312,13 +317,22 @@ class MyCompanyRequestsView(APIView):
             return Response({"error": "Type de demande invalide."}, status=400)
 
         login_event = None
+        device = None
         if request_type == "device_deletion":
+            device_id = request.data.get("device_id")
             login_event_id = request.data.get("login_event_id")
-            login_event = LoginEvent.objects.filter(id=login_event_id).first()
-            if not login_event or login_event.user_id not in get_company_user_ids(owner):
-                return Response({"error": "Appareil introuvable."}, status=404)
-            if PlatformRequest.objects.filter(login_event=login_event, status="pending").exists():
-                return Response({"error": "Une demande est déjà en attente pour cet appareil."}, status=400)
+            if device_id:
+                device = Device.objects.filter(id=device_id, admin_profile=owner.admin_profile).first()
+                if not device:
+                    return Response({"error": "Appareil introuvable."}, status=404)
+                if PlatformRequest.objects.filter(device=device, status="pending").exists():
+                    return Response({"error": "Une demande est déjà en attente pour cet appareil."}, status=400)
+            else:
+                login_event = LoginEvent.objects.filter(id=login_event_id).first()
+                if not login_event or login_event.user_id not in get_company_user_ids(owner):
+                    return Response({"error": "Appareil introuvable."}, status=404)
+                if PlatformRequest.objects.filter(login_event=login_event, status="pending").exists():
+                    return Response({"error": "Une demande est déjà en attente pour cet appareil."}, status=400)
 
         if request_type == "activation":
             if PlatformRequest.objects.filter(
@@ -331,6 +345,7 @@ class MyCompanyRequestsView(APIView):
             admin_profile=owner.admin_profile,
             requested_by=request.user,
             login_event=login_event,
+            device=device,
             note=request.data.get("note", ""),
         )
         return Response(PlatformRequestSerializer(req).data, status=201)
@@ -587,8 +602,89 @@ class PlatformCompanyDevicesView(APIView):
         except AdminProfile.DoesNotExist:
             return Response({"error": "Société introuvable"}, status=404)
 
-        events = get_company_devices(admin_profile.user)
-        return Response(LoginEventSerializer(events, many=True).data)
+        devices = Device.objects.filter(admin_profile=admin_profile).select_related("user")
+        count, limit = get_device_limit_info(admin_profile.user)
+        return Response({
+            "devices": DeviceSerializer(devices, many=True).data,
+            "count": count,
+            "limit": limit,
+        })
+
+    def delete(self, request, admin_profile_id):
+        device_id = request.query_params.get("device_id") or request.data.get("device_id")
+        try:
+            admin_profile = AdminProfile.objects.get(id=admin_profile_id)
+        except AdminProfile.DoesNotExist:
+            return Response({"error": "Société introuvable"}, status=404)
+
+        device = Device.objects.filter(id=device_id, admin_profile=admin_profile).first()
+        if not device:
+            return Response({"error": "Appareil introuvable."}, status=404)
+        device.delete()
+        return Response(status=204)
+
+
+class PlatformOfferListView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def get(self, request):
+        offers = SubscriptionOffer.objects.all()
+        return Response(SubscriptionOfferSerializer(offers, many=True).data)
+
+    def post(self, request):
+        serializer = SubscriptionOfferSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+        serializer.save()
+        return Response(serializer.data, status=201)
+
+
+class PlatformOfferDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def patch(self, request, offer_id):
+        try:
+            offer = SubscriptionOffer.objects.get(id=offer_id)
+        except SubscriptionOffer.DoesNotExist:
+            return Response({"error": "Offre introuvable"}, status=404)
+
+        serializer = SubscriptionOfferSerializer(offer, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, offer_id):
+        try:
+            offer = SubscriptionOffer.objects.get(id=offer_id)
+        except SubscriptionOffer.DoesNotExist:
+            return Response({"error": "Offre introuvable"}, status=404)
+        offer.delete()
+        return Response(status=204)
+
+
+class PlatformCompanyOfferAssignView(APIView):
+    permission_classes = [IsAuthenticated, IsPlatformOwner]
+
+    def patch(self, request, admin_profile_id):
+        try:
+            admin_profile = AdminProfile.objects.get(id=admin_profile_id)
+        except AdminProfile.DoesNotExist:
+            return Response({"error": "Société introuvable"}, status=404)
+
+        offer_id = request.data.get("offer_id")
+        offer = None
+        if offer_id:
+            offer = SubscriptionOffer.objects.filter(id=offer_id).first()
+            if not offer:
+                return Response({"error": "Offre introuvable"}, status=404)
+
+        sub, _ = Subscription.objects.get_or_create(admin_profile=admin_profile)
+        sub.offer = offer
+        sub.updated_by = request.user
+        sub.save()
+
+        return Response(CompanySubscriptionSerializer(admin_profile, context={"request": request}).data)
 
 
 class PlatformMonitoringView(APIView):
@@ -621,6 +717,21 @@ class PlatformMonitoringView(APIView):
         })
 
 
+def _activate_subscription(admin_profile, updated_by, offer=None):
+    """Activates (or reactivates) a company's subscription, optionally
+    assigning a SubscriptionOffer plan. Shared by manual approval
+    (PlatformRequestResolveView) and the simulated payment endpoint
+    (PublicPaymentRequestView)."""
+    sub, _ = Subscription.objects.get_or_create(admin_profile=admin_profile)
+    sub.status = "active"
+    sub.trial_ends_at = None
+    if offer is not None:
+        sub.offer = offer
+    sub.updated_by = updated_by
+    sub.save()
+    return sub
+
+
 class PlatformRequestListView(APIView):
     permission_classes = [IsAuthenticated, IsPlatformOwner]
 
@@ -648,15 +759,16 @@ class PlatformRequestResolveView(APIView):
             return Response({"error": "Cette demande a déjà été traitée."}, status=400)
 
         if action == "approve":
-            if req.request_type == "device_deletion" and req.login_event:
+            if req.request_type == "device_deletion" and req.device:
+                req.device.delete()
+                req.device = None
+            elif req.request_type == "device_deletion" and req.login_event:
                 req.login_event.delete()
                 req.login_event = None
             elif req.request_type == "activation":
-                sub, _ = Subscription.objects.get_or_create(admin_profile=req.admin_profile)
-                sub.status = "active"
-                sub.trial_ends_at = None
-                sub.updated_by = request.user
-                sub.save()
+                _activate_subscription(req.admin_profile, request.user)
+            elif req.request_type == "payment":
+                _activate_subscription(req.admin_profile, request.user, offer=req.offer)
             req.status = "approved"
         else:
             req.status = "rejected"
@@ -682,6 +794,138 @@ class PlatformExpiringSoonView(APIView):
         ]
         out = CompanySubscriptionSerializer(expiring, many=True, context={"request": request})
         return Response(out.data)
+
+
+# =========================
+# PUBLIC (unauthenticated — used by the /abonnement-expire page, since a
+# blocked/expired subscription means the visitor has no valid JWT)
+# =========================
+class PublicOfferListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        offers = SubscriptionOffer.objects.filter(is_active=True)
+        return Response(SubscriptionOfferSerializer(offers, many=True).data)
+
+
+def _check_credentials(email, password):
+    """Verifies email/password without going through the real login endpoint
+    (which would itself reject a blocked/expired subscription). Returns
+    (user, error_response) — error_response is a ready-to-return Response
+    when the credentials or account are invalid, otherwise None.
+    """
+    email = (email or "").strip().lower()
+    user = CustomUser.objects.filter(email__iexact=email).first()
+    if not user or not user.check_password(password or ""):
+        return None, Response({"error": "Email ou mot de passe incorrect."}, status=401)
+    if not user.is_confirmed:
+        return None, Response({"error": "Compte non approuvé. Contactez votre administrateur."}, status=403)
+    return user, None
+
+
+class PublicVerifyAccountView(APIView):
+    """Identifies who is trying to pay (company + user name) without
+    issuing any JWT — the account's subscription is by definition inactive
+    at this point, so no real session should be created here. Used by the
+    /abonnement-expire payment flow to decide whether to show the payment
+    form (admins only) or a "wait for your admin" message."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user, error = _check_credentials(request.data.get("email"), request.data.get("password"))
+        if error:
+            return error
+
+        owner = get_subscription_owner(user)
+        admin_profile = getattr(owner, "admin_profile", None) if owner else None
+        if not admin_profile:
+            return Response({"error": "Aucune société associée à ce compte."}, status=404)
+
+        return Response({
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "is_admin": user.role == "admin",
+            "company_name": admin_profile.company_name,
+        })
+
+
+class PublicPaymentRequestView(APIView):
+    """Records a direct-payment request from a blocked/expired company and
+    (until a real payment gateway is wired in) immediately simulates its
+    approval: activates the subscription with the chosen offer, exactly as
+    a Label Technology admin approving the request manually would.
+
+    Only the company's admin can trigger this (re-checked here server-side,
+    not just gated in the UI) — credentials are re-verified independently of
+    PublicVerifyAccountView, since that call only gates what the frontend
+    displays and must not be trusted as proof of authorization on its own.
+
+    TODO: once a real payment provider (Mvola/PayPal/Visa/Mastercard) is
+    integrated, this must only create the pending PlatformRequest and defer
+    activation to a verified payment webhook / manual review, instead of
+    auto-approving on submit.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user, error = _check_credentials(request.data.get("email"), request.data.get("password"))
+        if error:
+            return error
+
+        if user.role != "admin":
+            return Response(
+                {"error": "Seul un administrateur de la société peut effectuer ce paiement."},
+                status=403,
+            )
+
+        offer_id = request.data.get("offer_id")
+        payment_method = request.data.get("payment_method")
+        payment_reference = (request.data.get("payment_reference") or "").strip()
+        if payment_method not in dict(PlatformRequest.PAYMENT_METHOD_CHOICES):
+            return Response({"error": "Moyen de paiement invalide."}, status=400)
+
+        if payment_method == "mvola":
+            digits = payment_reference.replace(" ", "")
+            if not digits.isdigit() or len(digits) < 9:
+                return Response({"error": "Numéro de téléphone MVola invalide."}, status=400)
+        elif payment_method == "paypal":
+            if "@" not in payment_reference:
+                return Response({"error": "Email PayPal invalide."}, status=400)
+        else:  # visa / mastercard
+            if len(payment_reference) < 2:
+                return Response({"error": "Le nom du titulaire de la carte est obligatoire."}, status=400)
+
+        offer = SubscriptionOffer.objects.filter(id=offer_id, is_active=True).first()
+        if not offer:
+            return Response({"error": "Offre introuvable."}, status=404)
+
+        owner = get_subscription_owner(user)
+        admin_profile = getattr(owner, "admin_profile", None) if owner else None
+        if not admin_profile:
+            return Response({"error": "Aucune société associée à ce compte."}, status=404)
+
+        if PlatformRequest.objects.filter(admin_profile=admin_profile, request_type="payment", status="pending").exists():
+            return Response({"error": "Une demande de paiement est déjà en attente pour cette société."}, status=400)
+
+        req = PlatformRequest.objects.create(
+            request_type="payment",
+            admin_profile=admin_profile,
+            requested_by=user,
+            offer=offer,
+            payment_method=payment_method,
+            payment_reference=payment_reference,
+            contact_email=user.email,
+            note=request.data.get("note", ""),
+        )
+
+        # Simulated auto-approval: no real payment gateway yet (see docstring above).
+        _activate_subscription(admin_profile, updated_by=None, offer=offer)
+        req.status = "approved"
+        req.resolved_at = timezone.now()
+        req.save()
+
+        return Response(PlatformRequestSerializer(req).data, status=201)
 
 
 # =========================
