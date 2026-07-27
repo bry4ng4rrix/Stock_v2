@@ -13,6 +13,7 @@ from .models import (
     ProductVariant,
     Notification,
     Sale,
+    Ticket,
     Movement,
     ChatMessage,
     Subscription,
@@ -123,6 +124,8 @@ class SaleSerializer(serializers.ModelSerializer):
     variant_label = serializers.SerializerMethodField(read_only=True)
     profit_per_unit = serializers.SerializerMethodField(read_only=True)
     total_profit = serializers.SerializerMethodField(read_only=True)
+    ticket_id = serializers.SerializerMethodField(read_only=True)
+    ticket_image = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Sale
@@ -147,6 +150,8 @@ class SaleSerializer(serializers.ModelSerializer):
             "profit_per_unit",
             "total_profit",
             "sold_at",
+            "ticket_id",
+            "ticket_image",
         ]
 
     def validate(self, attrs):
@@ -191,6 +196,46 @@ class SaleSerializer(serializers.ModelSerializer):
 
     def get_total_profit(self, obj):
         return obj.total_profit
+
+    def get_ticket_id(self, obj):
+        ticket = next(iter(obj.tickets.all()), None)
+        return ticket.id if ticket else None
+
+    def get_ticket_image(self, obj):
+        ticket = next(iter(obj.tickets.all()), None)
+        if not ticket or not ticket.image:
+            return None
+        request = self.context.get("request")
+        url = ticket.image.url
+        return request.build_absolute_uri(url) if request else url
+
+
+class TicketSerializer(serializers.ModelSerializer):
+    shop_name = serializers.CharField(source="magasin.shop_name", read_only=True)
+    seller_name = serializers.CharField(source="seller.full_name", read_only=True)
+    sale_ids = serializers.PrimaryKeyRelatedField(
+        source="sales", many=True, queryset=Sale.objects.all(), write_only=True, required=False
+    )
+
+    class Meta:
+        model = Ticket
+        fields = [
+            "id",
+            "ticket_number",
+            "magasin",
+            "shop_name",
+            "seller",
+            "seller_name",
+            "customer_name",
+            "total_amount",
+            "is_paid",
+            "payment_amount",
+            "payment_due_date",
+            "image",
+            "sale_ids",
+            "created_at",
+        ]
+        read_only_fields = ["id", "magasin", "seller", "created_at"]
 
 
 class MovementSerializer(serializers.ModelSerializer):

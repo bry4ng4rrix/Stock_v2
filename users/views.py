@@ -26,8 +26,8 @@ from django.core.management import call_command
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
-from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest, Device, SubscriptionOffer
-from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer, DeviceSerializer, SubscriptionOfferSerializer
+from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, Ticket, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest, Device, SubscriptionOffer
+from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, TicketSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer, DeviceSerializer, SubscriptionOfferSerializer
 from .permissions import IsAdmin, IsPlatformOwner
 from .subscriptions import get_company_magasins, get_company_user_ids, get_company_devices, get_subscription_owner, get_subscription, get_device_limit_info
 from rest_framework_simplejwt.views import TokenViewBase
@@ -1156,7 +1156,7 @@ class SaleViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     def get_queryset(self):
         user = self.request.user
-        base_qs = Sale.objects.select_related('product', 'magasin', 'seller')
+        base_qs = Sale.objects.select_related('product', 'magasin', 'seller').prefetch_related('tickets')
         if user.role == "admin":
             return base_qs.filter(magasin__admins=user)
         elif user.role == "magasin":
@@ -1211,6 +1211,39 @@ class SaleViewSet(viewsets.ModelViewSet):
                 change=-sale.quantity,
                 note=f"Vente par {self.request.user.full_name}"
             )
+
+
+class TicketViewSet(viewsets.ModelViewSet):
+    """Reçus (tickets) générés côté client, avec leur image, liés aux ventes qui les composent."""
+    serializer_class = TicketSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser]
+    http_method_names = ["get", "post", "head", "options"]
+
+    def get_queryset(self):
+        user = self.request.user
+        base_qs = Ticket.objects.select_related('magasin', 'seller').prefetch_related('sales').order_by('-created_at')
+        if user.role == "admin":
+            return base_qs.filter(magasin__admins=user)
+        elif user.role == "magasin":
+            try:
+                magasin = MagasinProfile.objects.get(user=user)
+                return base_qs.filter(magasin=magasin)
+            except MagasinProfile.DoesNotExist:
+                return Ticket.objects.none()
+        elif user.role == "employer":
+            return base_qs.filter(magasin__employers__user=user)
+        return Ticket.objects.none()
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        sales = serializer.validated_data.get("sales") or []
+
+        for sale in sales:
+            _check_sale_ownership(user, sale.product)
+
+        magasin = sales[0].magasin if sales else None
+        serializer.save(seller=user, magasin=magasin)
 
 
 class BulkSaleView(APIView):

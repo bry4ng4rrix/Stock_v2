@@ -12,6 +12,7 @@ from .views import (
     ProfitView,
     AdminMagasinProfitView,
     SaleViewSet,
+    TicketViewSet,
     BulkSaleView,
     MovementViewSet,
     AdminMagasinOverviewView,
@@ -59,6 +60,7 @@ router = DefaultRouter()
 # Register product and sale viewsets
 router.register(r"products", ProductViewSet, basename="products")
 router.register(r"sales", SaleViewSet, basename="sales")
+router.register(r"tickets", TicketViewSet, basename="tickets")
 router.register(r"movements", MovementViewSet, basename="movements")
 router.register(r"notifications", NotificationViewSet, basename="notifications")
 router.register(r"magasins", MagasinViewSet, basename="magasins")

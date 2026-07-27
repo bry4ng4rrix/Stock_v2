@@ -497,6 +497,17 @@ class DjangoAPIClient {
     },
   }
 
+  // ==================== Tickets Service ====================
+  tickets = {
+    create: async (data: FormData) => {
+      return this.postFormData<any>('/users/tickets/', data)
+    },
+
+    list: async () => {
+      return this.get<any[]>('/users/tickets/')
+    },
+  }
+
   // ==================== Movements Service ====================
   movements = {
     list: async (filters?: { store_id?: number; movement_type?: string }) => {

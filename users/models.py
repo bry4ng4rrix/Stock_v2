@@ -451,6 +451,24 @@ class Sale(models.Model):
         return self.sale_price - fallback_purchase_price
 
 
+class Ticket(models.Model):
+    """Reçu généré côté client pour une vente (mono ou multi-produits), avec son image imprimable."""
+    ticket_number = models.CharField(max_length=50, unique=True)
+    magasin = models.ForeignKey(MagasinProfile, on_delete=models.SET_NULL, related_name="tickets", null=True, blank=True)
+    seller = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, related_name="tickets", null=True, blank=True)
+    sales = models.ManyToManyField(Sale, related_name="tickets", blank=True)
+    customer_name = models.CharField(max_length=255, blank=True, null=True)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    is_paid = models.BooleanField(default=True)
+    payment_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    payment_due_date = models.DateField(null=True, blank=True)
+    image = models.ImageField(upload_to="tickets/%Y/%m/")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.ticket_number
+
+
 class Notification(models.Model):
     NOTIF_TYPES = (
         ("sale", "Sale"),
