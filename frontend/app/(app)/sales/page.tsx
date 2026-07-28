@@ -1,18 +1,18 @@
-'use client';
+"use client";
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
-import { djangoClient } from '@/lib/django-client';
-import { useCurrentUser } from '@/lib/auth/useCurrentUser';
+import { useEffect, useState, useMemo, useCallback } from "react";
+import { djangoClient } from "@/lib/django-client";
+import { useCurrentUser } from "@/lib/auth/useCurrentUser";
 
-import { Button } from '@/components/ui/button';
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -20,9 +20,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -30,15 +30,15 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from "@/components/ui/select";
 
 import {
   Plus,
@@ -54,11 +54,11 @@ import {
   Trash2,
   Printer,
   X,
-} from 'lucide-react';
-import * as XLSX from 'xlsx';
+} from "lucide-react";
+import * as XLSX from "xlsx";
 
-import { toast } from 'sonner';
-import { useRealtimeRefresh } from '@/lib/hooks/useRealtimeRefresh';
+import { toast } from "sonner";
+import { useRealtimeRefresh } from "@/lib/hooks/useRealtimeRefresh";
 
 interface Sale {
   id: number;
@@ -137,7 +137,7 @@ interface TicketData {
 }
 
 const fmt = (n: number) =>
-  new Intl.NumberFormat('fr-MG', {
+  new Intl.NumberFormat("fr-MG", {
     minimumFractionDigits: 0,
   }).format(Math.round(n));
 
@@ -150,11 +150,11 @@ export default function SalesPage() {
 
   const [loading, setLoading] = useState(true);
   const [loadingSaleProducts, setLoadingSaleProducts] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [saleStartDate, setSaleStartDate] = useState('');
-  const [saleEndDate, setSaleEndDate] = useState('');
-  const [dueStartDate, setDueStartDate] = useState('');
-  const [dueEndDate, setDueEndDate] = useState('');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [saleStartDate, setSaleStartDate] = useState("");
+  const [saleEndDate, setSaleEndDate] = useState("");
+  const [dueStartDate, setDueStartDate] = useState("");
+  const [dueEndDate, setDueEndDate] = useState("");
 
   // Dialog
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -164,29 +164,29 @@ export default function SalesPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingSale, setDeletingSale] = useState<Sale | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
-  const [selectedStoreId, setSelectedStoreId] = useState<number | ''>('');
-  const [storeSearch, setStoreSearch] = useState('');
+  const [selectedStoreId, setSelectedStoreId] = useState<number | "">("");
+  const [storeSearch, setStoreSearch] = useState("");
 
   // Form
-  const [selectedProduct, setSelectedProduct] =
-    useState<Product | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
-  const [productSearch, setProductSearch] = useState('');
-  const [showProductDropdown, setShowProductDropdown] =
-    useState(false);
+  const [productSearch, setProductSearch] = useState("");
+  const [showProductDropdown, setShowProductDropdown] = useState(false);
 
-  const [quantity, setQuantity] = useState('1');
-  const [salePrice, setSalePrice] = useState('');
+  const [quantity, setQuantity] = useState("1");
+  const [salePrice, setSalePrice] = useState("");
 
-  const [customerName, setCustomerName] = useState('');
+  const [customerName, setCustomerName] = useState("");
 
   const [isPaid, setIsPaid] = useState(true);
 
-  const [paymentAmount, setPaymentAmount] = useState('');
-  const [paymentDueDate, setPaymentDueDate] = useState('');
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentDueDate, setPaymentDueDate] = useState("");
 
   // Quantité à vendre par variant (id du variant -> quantité saisie)
-  const [variantQuantities, setVariantQuantities] = useState<Record<number, string>>({});
+  const [variantQuantities, setVariantQuantities] = useState<
+    Record<number, string>
+  >({});
 
   // Panier (plusieurs produits/variantes dans une seule vente)
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -197,56 +197,62 @@ export default function SalesPage() {
 
   const activeStoreId = isAdmin
     ? selectedStoreId
-    : (user?.magasin_id ?? user?.store_id ?? '');
+    : (user?.magasin_id ?? user?.store_id ?? "");
 
   const productVariants = selectedProduct?.variants ?? [];
   const hasVariants = productVariants.length > 0;
 
   const sellableVariants = useMemo(
-    () => productVariants.filter(v => v.quantity > 0),
-    [productVariants]
+    () => productVariants.filter((v) => v.quantity > 0),
+    [productVariants],
   );
 
-  const handleVariantQtyChange = (variantId: number, rawValue: string, max: number) => {
-    if (rawValue === '') {
-      setVariantQuantities(prev => ({ ...prev, [variantId]: '' }));
+  const handleVariantQtyChange = (
+    variantId: number,
+    rawValue: string,
+    max: number,
+  ) => {
+    if (rawValue === "") {
+      setVariantQuantities((prev) => ({ ...prev, [variantId]: "" }));
       return;
     }
     const parsed = parseInt(rawValue, 10);
-    const clamped = Number.isNaN(parsed) ? 0 : Math.min(Math.max(0, parsed), max);
-    setVariantQuantities(prev => ({ ...prev, [variantId]: String(clamped) }));
+    const clamped = Number.isNaN(parsed)
+      ? 0
+      : Math.min(Math.max(0, parsed), max);
+    setVariantQuantities((prev) => ({ ...prev, [variantId]: String(clamped) }));
   };
 
   const totalVariantQty = useMemo(() => {
     return Object.values(variantQuantities).reduce(
       (sum, val) => sum + (parseInt(val, 10) || 0),
-      0
+      0,
     );
   }, [variantQuantities]);
 
   const cartItemAmount = (item: CartItem) => {
     const qty = item.hasVariants
       ? (item.variantLines ?? []).reduce((sum, v) => sum + v.quantity, 0)
-      : item.quantity ?? 0;
+      : (item.quantity ?? 0);
     return qty * item.salePrice;
   };
 
   const cartTotal = useMemo(
     () => cart.reduce((sum, item) => sum + cartItemAmount(item), 0),
-    [cart]
+    [cart],
   );
 
   // Construit un item de panier à partir de la sélection courante du formulaire.
   // Retourne null (et affiche une erreur si `showErrors`) si la sélection est invalide.
   const buildCartItemFromSelection = (showErrors: boolean): CartItem | null => {
     if (!selectedProduct) {
-      if (showErrors) toast.error('Veuillez sélectionner un produit');
+      if (showErrors) toast.error("Veuillez sélectionner un produit");
       return null;
     }
 
     const price = parseFloat(salePrice);
     if (isNaN(price) || price <= 0) {
-      if (showErrors) toast.error('Prix invalide');
+      if (showErrors) toast.error("Prix invalide");
       return null;
     }
 
@@ -255,15 +261,17 @@ export default function SalesPage() {
         .map((v) => ({
           variantId: v.id,
           label:
-            [v.size?.toUpperCase(), v.color].filter(Boolean).join(' / ') ||
+            [v.size?.toUpperCase(), v.color].filter(Boolean).join(" / ") ||
             `Variante #${v.id}`,
-          quantity: parseInt(variantQuantities[v.id] ?? '', 10) || 0,
+          quantity: parseInt(variantQuantities[v.id] ?? "", 10) || 0,
         }))
         .filter((v) => v.quantity > 0);
 
       if (variantLines.length === 0) {
         if (showErrors) {
-          toast.error('Veuillez indiquer une quantité pour au moins une variante');
+          toast.error(
+            "Veuillez indiquer une quantité pour au moins une variante",
+          );
         }
         return null;
       }
@@ -279,11 +287,12 @@ export default function SalesPage() {
 
     const qty = parseInt(quantity, 10);
     if (isNaN(qty) || qty <= 0) {
-      if (showErrors) toast.error('Quantité invalide');
+      if (showErrors) toast.error("Quantité invalide");
       return null;
     }
     if (qty > currentStock) {
-      if (showErrors) toast.error(`Stock insuffisant. Disponible : ${currentStock}`);
+      if (showErrors)
+        toast.error(`Stock insuffisant. Disponible : ${currentStock}`);
       return null;
     }
 
@@ -298,9 +307,9 @@ export default function SalesPage() {
 
   const clearProductSelection = () => {
     setSelectedProduct(null);
-    setProductSearch('');
-    setSalePrice('');
-    setQuantity('1');
+    setProductSearch("");
+    setSalePrice("");
+    setQuantity("1");
     setVariantQuantities({});
     setShowProductDropdown(false);
   };
@@ -311,7 +320,7 @@ export default function SalesPage() {
 
     setCart((prev) => [...prev, item]);
     clearProductSelection();
-    toast.success('Produit ajouté au panier');
+    toast.success("Produit ajouté au panier");
   };
 
   const handleRemoveCartItem = (key: string) => {
@@ -320,23 +329,25 @@ export default function SalesPage() {
 
   const fetchStores = useCallback(async () => {
     try {
-      const data = await djangoClient.get<Store[]>('/users/magasins/users/');
+      const data = await djangoClient.get<Store[]>("/users/magasins/users/");
       setStores(Array.isArray(data) ? data : []);
     } catch (error: any) {
-      toast.error(error?.message || 'Erreur lors du chargement des magasins');
+      toast.error(error?.message || "Erreur lors du chargement des magasins");
     }
   }, []);
 
   const fetchSaleProducts = useCallback(async (magasinId: number) => {
     setLoadingSaleProducts(true);
     try {
-      const productsData = await djangoClient.products.list({ magasin_id: magasinId });
-      const storeProducts = (Array.isArray(productsData) ? productsData : []).filter(
-        (p) => Number(p.magasin) === Number(magasinId)
-      );
+      const productsData = await djangoClient.products.list({
+        magasin_id: magasinId,
+      });
+      const storeProducts = (
+        Array.isArray(productsData) ? productsData : []
+      ).filter((p) => Number(p.magasin) === Number(magasinId));
       setSaleProducts(storeProducts);
     } catch (error: any) {
-      toast.error(error?.message || 'Erreur lors du chargement des produits');
+      toast.error(error?.message || "Erreur lors du chargement des produits");
       setSaleProducts([]);
     } finally {
       setLoadingSaleProducts(false);
@@ -352,16 +363,14 @@ export default function SalesPage() {
       setSales(Array.isArray(salesData) ? salesData : []);
     } catch (error: any) {
       if (!silent) {
-        toast.error(
-          error?.message || 'Erreur lors du chargement des données'
-        );
+        toast.error(error?.message || "Erreur lors du chargement des données");
       }
     } finally {
       if (!silent) setLoading(false);
     }
   }, []);
 
-  useRealtimeRefresh(['sale', 'product'], () => fetchData(true));
+  useRealtimeRefresh(["sale", "product"], () => fetchData(true));
 
   useEffect(() => {
     fetchData();
@@ -377,7 +386,14 @@ export default function SalesPage() {
     if (magasinId) {
       fetchSaleProducts(magasinId);
     }
-  }, [dialogOpen, isAdmin, user?.magasin_id, user?.store_id, fetchStores, fetchSaleProducts]);
+  }, [
+    dialogOpen,
+    isAdmin,
+    user?.magasin_id,
+    user?.store_id,
+    fetchStores,
+    fetchSaleProducts,
+  ]);
 
   useEffect(() => {
     if (!dialogOpen || !isAdmin || !selectedStoreId) return;
@@ -389,8 +405,10 @@ export default function SalesPage() {
     const term = searchTerm.toLowerCase();
 
     return sales.filter((sale) => {
-      const soldDateStr = sale.sold_at ? sale.sold_at.split('T')[0] : '';
-      const dueDateStr = sale.payment_due_date ? sale.payment_due_date.split('T')[0] : '';
+      const soldDateStr = sale.sold_at ? sale.sold_at.split("T")[0] : "";
+      const dueDateStr = sale.payment_due_date
+        ? sale.payment_due_date.split("T")[0]
+        : "";
 
       const matchesTerm =
         !term ||
@@ -400,18 +418,25 @@ export default function SalesPage() {
 
       const matchesSaleStart = !saleStartDate || soldDateStr >= saleStartDate;
       const matchesSaleEnd = !saleEndDate || soldDateStr <= saleEndDate;
-      const matchesDueStart = !dueStartDate || (dueDateStr && dueDateStr >= dueStartDate);
-      const matchesDueEnd = !dueEndDate || (dueDateStr && dueDateStr <= dueEndDate);
+      const matchesDueStart =
+        !dueStartDate || (dueDateStr && dueDateStr >= dueStartDate);
+      const matchesDueEnd =
+        !dueEndDate || (dueDateStr && dueDateStr <= dueEndDate);
 
-      return matchesTerm && matchesSaleStart && matchesSaleEnd && matchesDueStart && matchesDueEnd;
+      return (
+        matchesTerm &&
+        matchesSaleStart &&
+        matchesSaleEnd &&
+        matchesDueStart &&
+        matchesDueEnd
+      );
     });
   }, [sales, searchTerm, saleStartDate, saleEndDate, dueStartDate, dueEndDate]);
 
   const filteredStores = useMemo(() => {
     const term = storeSearch.toLowerCase();
     return stores.filter(
-      (store) =>
-        !term || store.shop_name?.toLowerCase().includes(term)
+      (store) => !term || store.shop_name?.toLowerCase().includes(term),
     );
   }, [stores, storeSearch]);
 
@@ -420,7 +445,10 @@ export default function SalesPage() {
 
     return saleProducts
       .filter((product) => {
-        if (activeStoreId && Number(product.magasin) !== Number(activeStoreId)) {
+        if (
+          activeStoreId &&
+          Number(product.magasin) !== Number(activeStoreId)
+        ) {
           return false;
         }
         return (
@@ -434,24 +462,19 @@ export default function SalesPage() {
 
   // Stats
   const todaySales = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split("T")[0];
 
-    return sales.filter((sale) =>
-      sale.sold_at?.startsWith(today)
-    );
+    return sales.filter((sale) => sale.sold_at?.startsWith(today));
   }, [sales]);
 
   const totalRevenue = useMemo(() => {
-    return sales.reduce(
-      (sum, sale) => sum + Number(sale.total_price || 0),
-      0
-    );
+    return sales.reduce((sum, sale) => sum + Number(sale.total_price || 0), 0);
   }, [sales]);
 
   const todayRevenue = useMemo(() => {
     return todaySales.reduce(
       (sum, sale) => sum + Number(sale.total_price || 0),
-      0
+      0,
     );
   }, [todaySales]);
 
@@ -475,17 +498,18 @@ export default function SalesPage() {
     setSelectedProduct(product);
     setProductSearch(product.name);
     setVariantQuantities({});
-    const productPrice = product.sell_price || product.sale_price || product.shell_price || 0;
+    const productPrice =
+      product.sell_price || product.sale_price || product.shell_price || 0;
     setSalePrice(String(productPrice));
     setShowProductDropdown(false);
   };
 
   const handleStoreChange = (value: string) => {
-    const storeId = value ? Number(value) : '';
+    const storeId = value ? Number(value) : "";
     setSelectedStoreId(storeId);
     setSelectedProduct(null);
-    setProductSearch('');
-    setSalePrice('');
+    setProductSearch("");
+    setSalePrice("");
     setVariantQuantities({});
     setShowProductDropdown(false);
     setSaleProducts([]);
@@ -494,17 +518,17 @@ export default function SalesPage() {
   // Reset form
   const resetForm = () => {
     setSelectedProduct(null);
-    setSelectedStoreId('');
-    setStoreSearch('');
+    setSelectedStoreId("");
+    setStoreSearch("");
     setSaleProducts([]);
     setVariantQuantities({});
-    setProductSearch('');
-    setQuantity('1');
-    setSalePrice('');
-    setCustomerName('');
+    setProductSearch("");
+    setQuantity("1");
+    setSalePrice("");
+    setCustomerName("");
     setIsPaid(true);
-    setPaymentAmount('');
-    setPaymentDueDate('');
+    setPaymentAmount("");
+    setPaymentDueDate("");
     setShowProductDropdown(false);
     setCart([]);
   };
@@ -519,7 +543,7 @@ export default function SalesPage() {
     const today = new Date();
 
     const diffDays = Math.ceil(
-      (today.getTime() - dueDate.getTime()) / 86400000
+      (today.getTime() - dueDate.getTime()) / 86400000,
     );
 
     return {
@@ -528,21 +552,17 @@ export default function SalesPage() {
       isOverdue: diffDays >= 0,
       daysUntil: Math.max(
         0,
-        Math.ceil(
-          (dueDate.getTime() - today.getTime()) / 86400000
-        )
+        Math.ceil((dueDate.getTime() - today.getTime()) / 86400000),
       ),
     };
   }, [isPaid, paymentDueDate]);
 
   // Create sale
-  const handleCreateSale = async (
-    e: React.FormEvent<HTMLFormElement>
-  ) => {
+  const handleCreateSale = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     if (isAdmin && !selectedStoreId) {
-      toast.error('Veuillez sélectionner un magasin');
+      toast.error("Veuillez sélectionner un magasin");
       return;
     }
 
@@ -555,16 +575,19 @@ export default function SalesPage() {
       return;
     }
 
-    const paymentAmountValue = parseFloat(paymentAmount || '0');
+    const paymentAmountValue = parseFloat(paymentAmount || "0");
     const resolvedPaymentDueDate = (() => {
       if (isPaid) return undefined;
       if (paymentDueDate) return paymentDueDate;
       const defaultDate = new Date();
       defaultDate.setDate(defaultDate.getDate() + 7);
-      return defaultDate.toISOString().split('T')[0];
+      return defaultDate.toISOString().split("T")[0];
     })();
 
-    const grandTotal = finalItems.reduce((sum, item) => sum + cartItemAmount(item), 0);
+    const grandTotal = finalItems.reduce(
+      (sum, item) => sum + cartItemAmount(item),
+      0,
+    );
 
     setSubmitting(true);
 
@@ -582,7 +605,9 @@ export default function SalesPage() {
         if (!isPaid && paymentAmountValue > 0) {
           linePayment = isLast
             ? remainingPayment
-            : Math.round((paymentAmountValue * itemAmount / grandTotal) * 100) / 100;
+            : Math.round(
+                ((paymentAmountValue * itemAmount) / grandTotal) * 100,
+              ) / 100;
           remainingPayment -= linePayment;
         }
 
@@ -599,7 +624,8 @@ export default function SalesPage() {
           };
 
           if (linePayment > 0) payload.payment_amount = linePayment;
-          if (resolvedPaymentDueDate) payload.payment_due_date = resolvedPaymentDueDate;
+          if (resolvedPaymentDueDate)
+            payload.payment_due_date = resolvedPaymentDueDate;
 
           const bulkRes = await djangoClient.sales.createBulk(payload);
           for (const s of bulkRes?.sales ?? []) {
@@ -625,7 +651,8 @@ export default function SalesPage() {
           };
 
           if (linePayment > 0) payload.payment_amount = linePayment;
-          if (resolvedPaymentDueDate) payload.payment_due_date = resolvedPaymentDueDate;
+          if (resolvedPaymentDueDate)
+            payload.payment_due_date = resolvedPaymentDueDate;
 
           const createRes = await djangoClient.sales.create(payload);
           if (createRes?.id) createdSaleIds.push(createRes.id);
@@ -639,10 +666,11 @@ export default function SalesPage() {
         }
       }
 
-      toast.success('Vente enregistrée avec succès');
+      toast.success("Vente enregistrée avec succès");
 
       const storeName = isAdmin
-        ? filteredStores.find((s) => s.magasin_id === selectedStoreId)?.shop_name
+        ? filteredStores.find((s) => s.magasin_id === selectedStoreId)
+            ?.shop_name
         : user?.shop_name;
 
       const newTicket: TicketData = {
@@ -668,8 +696,7 @@ export default function SalesPage() {
       await fetchData();
     } catch (error: any) {
       toast.error(
-        error?.message ||
-          'Erreur lors de l’enregistrement de la vente'
+        error?.message || "Erreur lors de l’enregistrement de la vente",
       );
     } finally {
       setSubmitting(false);
@@ -685,14 +712,16 @@ export default function SalesPage() {
     try {
       await djangoClient.sales.delete(deletingSale.id);
 
-      toast.success('Vente supprimée');
+      toast.success("Vente supprimée");
 
       setDeleteDialogOpen(false);
       setDeletingSale(null);
 
       setSales((prev) => prev.filter((s) => s.id !== deletingSale.id));
     } catch (error: any) {
-      toast.error(error?.message || 'Erreur lors de la suppression de la vente');
+      toast.error(
+        error?.message || "Erreur lors de la suppression de la vente",
+      );
     } finally {
       setDeleteLoading(false);
     }
@@ -700,82 +729,87 @@ export default function SalesPage() {
 
   // Date
   const formatDate = (date: string) => {
-    if (!date) return '-';
+    if (!date) return "-";
 
-    return new Date(date).toLocaleDateString('fr-FR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+    return new Date(date).toLocaleDateString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   };
 
   const handleExportExcel = () => {
     if (filteredSales.length === 0) {
-      toast.error('Aucune vente à exporter pour les filtres sélectionnés');
+      toast.error("Aucune vente à exporter pour les filtres sélectionnés");
       return;
     }
     const rows = filteredSales.map((sale) => ({
-      'Date vente': formatDate(sale.sold_at),
-      Client: sale.customer_name || '',
+      "Date vente": formatDate(sale.sold_at),
+      Client: sale.customer_name || "",
       Produit: sale.product_name || `Produit #${sale.product}`,
       Quantité: sale.quantity,
-      'Prix unitaire (Ar)': sale.sale_price,
-      'Total (Ar)': sale.total_price,
-      Paiement: sale.is_paid ? 'Payé' : 'Non payé',
-      'Montant versé (Ar)': sale.payment_amount ?? '',
-      'Date échéance': sale.payment_due_date ? formatDueDate(sale.payment_due_date) : '',
-      Vendeur: sale.seller_name || '',
-      Magasin: sale.shop_name || '',
+      "Prix unitaire (Ar)": sale.sale_price,
+      "Total (Ar)": sale.total_price,
+      Paiement: sale.is_paid ? "Payé" : "Non payé",
+      "Montant versé (Ar)": sale.payment_amount ?? "",
+      "Date échéance": sale.payment_due_date
+        ? formatDueDate(sale.payment_due_date)
+        : "",
+      Vendeur: sale.seller_name || "",
+      Magasin: sale.shop_name || "",
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Ventes');
-    XLSX.writeFile(wb, `ventes_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, "Ventes");
+    XLSX.writeFile(wb, `ventes_${new Date().toISOString().split("T")[0]}.xlsx`);
     toast.success(`${filteredSales.length} vente(s) exportée(s)`);
   };
 
   const formatDueDate = (dateStr?: string) => {
-    if (!dateStr) return '—';
-    const parts = dateStr.split('T')[0].split('-');
+    if (!dateStr) return "—";
+    const parts = dateStr.split("T")[0].split("-");
     if (parts.length === 3) {
       const [year, month, day] = parts;
       return `${day}/${month}/${year}`;
     }
     const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return '—';
-    return date.toLocaleDateString('fr-FR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
+    if (isNaN(date.getTime())) return "—";
+    return date.toLocaleDateString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
     });
   };
 
   const renderPaymentDueDate = (sale: Sale) => {
     if (sale.is_paid) return <span className="text-muted-foreground">—</span>;
-    if (!sale.payment_due_date) return <span className="text-muted-foreground">—</span>;
+    if (!sale.payment_due_date)
+      return <span className="text-muted-foreground">—</span>;
 
     const formatted = formatDueDate(sale.payment_due_date);
-    
+
     // Check if overdue
     const dueDate = new Date(sale.payment_due_date);
     dueDate.setHours(23, 59, 59, 999);
     const today = new Date();
-    
+
     const isOverdue = today > dueDate;
-    
+
     if (isOverdue) {
       const diffTime = Math.abs(today.getTime() - dueDate.getTime());
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
       return (
         <div className="flex flex-col">
           <span className="font-semibold text-red-600">{formatted}</span>
-          <span className="text-[10px] text-red-500 font-medium">Retard de {diffDays} j.</span>
+          <span className="text-[10px] text-red-500 font-medium">
+            Retard de {diffDays} j.
+          </span>
         </div>
       );
     }
-    
+
     return <span className="font-medium text-amber-600">{formatted}</span>;
   };
 
@@ -783,14 +817,16 @@ export default function SalesPage() {
 
   const hasValidDraft = Boolean(
     selectedProduct &&
-      Number(salePrice) > 0 &&
-      (hasVariants
-        ? totalVariantQty > 0
-        : (parseInt(quantity, 10) || 0) > 0 && (parseInt(quantity, 10) || 0) <= currentStock)
+    Number(salePrice) > 0 &&
+    (hasVariants
+      ? totalVariantQty > 0
+      : (parseInt(quantity, 10) || 0) > 0 &&
+        (parseInt(quantity, 10) || 0) <= currentStock),
   );
 
   const draftAmount = hasValidDraft
-    ? (hasVariants ? totalVariantQty : parseInt(quantity, 10) || 0) * Number(salePrice || 0)
+    ? (hasVariants ? totalVariantQty : parseInt(quantity, 10) || 0) *
+      Number(salePrice || 0)
     : 0;
 
   // Construit un ticket à partir d'une vente déjà enregistrée (pour ré-impression depuis le tableau)
@@ -816,13 +852,17 @@ export default function SalesPage() {
   });
 
   const escapeHtml = (value: string) =>
-    value.replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;',
-    }[c] as string));
+    value.replace(
+      /[&<>"']/g,
+      (c) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c] as string,
+    );
 
   const buildTicketHtml = (ticket: TicketData) => {
     const rows = ticket.items
@@ -831,14 +871,14 @@ export default function SalesPage() {
           <tr>
             <td>
               ${escapeHtml(line.name)}
-              ${line.variantLabel ? `<div class="variant">${escapeHtml(line.variantLabel)}</div>` : ''}
+              ${line.variantLabel ? `<div class="variant">${escapeHtml(line.variantLabel)}</div>` : ""}
             </td>
             <td class="right">${line.quantity}</td>
             <td class="right">${fmt(line.unitPrice)}</td>
             <td class="right">${fmt(line.total)}</td>
-          </tr>`
+          </tr>`,
       )
-      .join('');
+      .join("");
 
     return `<!doctype html>
 <html>
@@ -874,12 +914,12 @@ export default function SalesPage() {
 </style>
 </head>
 <body>
-  <div class="center store">${escapeHtml(ticket.storeName || 'Boutique')}</div>
+  <div class="center store">Valhery Wear</div>
   <div class="center meta">Ticket n° ${escapeHtml(ticket.ticketNumber)}</div>
-  <div class="center meta">${new Date(ticket.date).toLocaleString('fr-FR')}</div>
+  <div class="center meta">${new Date(ticket.date).toLocaleString("fr-FR")}</div>
   <hr />
-  ${ticket.sellerName ? `<div class="meta">Vendeur : ${escapeHtml(ticket.sellerName)}</div>` : ''}
-  <div class="meta">Client : ${escapeHtml(ticket.customerName || 'Client de passage')}</div>
+  ${ticket.sellerName ? `<div class="meta">Vendeur : ${escapeHtml(ticket.sellerName)}</div>` : ""}
+  <div class="meta">Client : ${escapeHtml(ticket.customerName || "Client de passage")}</div>
   <hr />
   <table>
     <thead>
@@ -894,12 +934,12 @@ export default function SalesPage() {
     </tbody>
   </table>
   <hr />
-  <div class="meta">Paiement : ${ticket.isPaid ? 'Payé' : 'Non payé'}</div>
+  <div class="meta">Paiement : ${ticket.isPaid ? "Payé" : "Non payé"}</div>
   ${
     !ticket.isPaid
       ? `<div class="meta">Versé : ${fmt(ticket.paymentAmount || 0)} Ar</div>
-         <div class="meta">Échéance : ${ticket.paymentDueDate ? formatDueDate(ticket.paymentDueDate) : '—'}</div>`
-      : ''
+         <div class="meta">Échéance : ${ticket.paymentDueDate ? formatDueDate(ticket.paymentDueDate) : "—"}</div>`
+      : ""
   }
   <div class="center footer">Merci de votre achat !</div>
 </body>
@@ -907,7 +947,7 @@ export default function SalesPage() {
   };
 
   const printTicket = (ticket: TicketData) => {
-    const printWindow = window.open('', '_blank', 'width=380,height=640');
+    const printWindow = window.open("", "_blank", "width=380,height=640");
     if (!printWindow) {
       toast.error("Veuillez autoriser les pop-ups pour imprimer le ticket");
       return;
@@ -922,7 +962,7 @@ export default function SalesPage() {
     // On ouvre une page vide same-origin et on y insère l'image en <img> : naviguer
     // directement window.open() vers l'URL de l'image (autre origine : API vs frontend)
     // empêche ensuite d'appeler .print() sur la fenêtre (erreur de sécurité navigateur).
-    const printWindow = window.open('', '_blank', 'width=380,height=640');
+    const printWindow = window.open("", "_blank", "width=380,height=640");
     if (!printWindow) {
       toast.error("Veuillez autoriser les pop-ups pour imprimer le ticket");
       return;
@@ -960,24 +1000,28 @@ export default function SalesPage() {
     const colUnit = width - 16 - 70;
     const colTotal = width - 16;
 
-    const itemLines = ticket.items.reduce((sum, l) => sum + (l.variantLabel ? 2 : 1), 0);
-    const height = 150 + 30 + itemLines * lineHeight + 60 + (ticket.isPaid ? 60 : 100);
+    const itemLines = ticket.items.reduce(
+      (sum, l) => sum + (l.variantLabel ? 2 : 1),
+      0,
+    );
+    const height =
+      150 + 30 + itemLines * lineHeight + 60 + (ticket.isPaid ? 60 : 100);
 
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement("canvas");
     const scale = 2;
     canvas.width = width * scale;
     canvas.height = height * scale;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     if (!ctx) return Promise.resolve(null);
 
     ctx.scale(scale, scale);
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = '#111111';
+    ctx.fillStyle = "#111111";
 
     const dashedLine = (yPos: number) => {
       ctx.save();
-      ctx.strokeStyle = '#999999';
+      ctx.strokeStyle = "#999999";
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.moveTo(16, yPos);
@@ -987,57 +1031,61 @@ export default function SalesPage() {
     };
 
     let y = 24;
-    ctx.textAlign = 'center';
+    ctx.textAlign = "center";
     ctx.font = 'bold 16px "Courier New", monospace';
-    ctx.fillText(ticket.storeName || 'Boutique', width / 2, y);
+    ctx.fillText("Valhery Wear", width / 2, y);
 
     y += 18;
     ctx.font = '11px "Courier New", monospace';
     ctx.fillText(`Ticket n° ${ticket.ticketNumber}`, width / 2, y);
 
     y += 14;
-    ctx.fillText(new Date(ticket.date).toLocaleString('fr-FR'), width / 2, y);
+    ctx.fillText(new Date(ticket.date).toLocaleString("fr-FR"), width / 2, y);
 
     y += 10;
     dashedLine(y);
     y += 16;
 
-    ctx.textAlign = 'left';
+    ctx.textAlign = "left";
     if (ticket.sellerName) {
       ctx.fillText(`Vendeur : ${ticket.sellerName}`, 16, y);
       y += 14;
     }
-    ctx.fillText(`Client : ${ticket.customerName || 'Client de passage'}`, 16, y);
+    ctx.fillText(
+      `Client : ${ticket.customerName || "Client de passage"}`,
+      16,
+      y,
+    );
     y += 10;
     dashedLine(y);
     y += 20;
 
     ctx.font = 'bold 11px "Courier New", monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText('Article', 16, y);
-    ctx.textAlign = 'right';
-    ctx.fillText('Qté', colQty, y);
-    ctx.fillText('P.U.', colUnit, y);
-    ctx.fillText('Total', colTotal, y);
+    ctx.textAlign = "left";
+    ctx.fillText("Article", 16, y);
+    ctx.textAlign = "right";
+    ctx.fillText("Qté", colQty, y);
+    ctx.fillText("P.U.", colUnit, y);
+    ctx.fillText("Total", colTotal, y);
     y += 6;
     dashedLine(y);
     y += 16;
 
     ctx.font = '12px "Courier New", monospace';
     for (const line of ticket.items) {
-      ctx.fillStyle = '#111111';
-      ctx.textAlign = 'left';
+      ctx.fillStyle = "#111111";
+      ctx.textAlign = "left";
       ctx.fillText(line.name, 16, y);
-      ctx.textAlign = 'right';
+      ctx.textAlign = "right";
       ctx.fillText(String(line.quantity), colQty, y);
       ctx.fillText(fmt(line.unitPrice), colUnit, y);
       ctx.fillText(fmt(line.total), colTotal, y);
       y += lineHeight;
 
       if (line.variantLabel) {
-        ctx.textAlign = 'left';
+        ctx.textAlign = "left";
         ctx.font = '10px "Courier New", monospace';
-        ctx.fillStyle = '#555555';
+        ctx.fillStyle = "#555555";
         ctx.fillText(line.variantLabel, 16, y);
         ctx.font = '12px "Courier New", monospace';
         y += lineHeight;
@@ -1046,11 +1094,11 @@ export default function SalesPage() {
 
     dashedLine(y);
     y += 18;
-    ctx.fillStyle = '#111111';
+    ctx.fillStyle = "#111111";
     ctx.font = 'bold 13px "Courier New", monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText('TOTAL', 16, y);
-    ctx.textAlign = 'right';
+    ctx.textAlign = "left";
+    ctx.fillText("TOTAL", 16, y);
+    ctx.textAlign = "right";
     ctx.fillText(`${fmt(ticket.total)} Ar`, colTotal, y);
 
     y += 10;
@@ -1058,27 +1106,27 @@ export default function SalesPage() {
     y += 20;
 
     ctx.font = '11px "Courier New", monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(`Paiement : ${ticket.isPaid ? 'Payé' : 'Non payé'}`, 16, y);
+    ctx.textAlign = "left";
+    ctx.fillText(`Paiement : ${ticket.isPaid ? "Payé" : "Non payé"}`, 16, y);
     y += 14;
 
     if (!ticket.isPaid) {
       ctx.fillText(`Versé : ${fmt(ticket.paymentAmount || 0)} Ar`, 16, y);
       y += 14;
       ctx.fillText(
-        `Échéance : ${ticket.paymentDueDate ? formatDueDate(ticket.paymentDueDate) : '—'}`,
+        `Échéance : ${ticket.paymentDueDate ? formatDueDate(ticket.paymentDueDate) : "—"}`,
         16,
-        y
+        y,
       );
       y += 14;
     }
 
     y += 10;
-    ctx.textAlign = 'center';
-    ctx.fillText('Merci de votre achat !', width / 2, y);
+    ctx.textAlign = "center";
+    ctx.fillText("Merci de votre achat !", width / 2, y);
 
     return new Promise((resolve) => {
-      canvas.toBlob((blob) => resolve(blob), 'image/png');
+      canvas.toBlob((blob) => resolve(blob), "image/png");
     });
   };
 
@@ -1089,18 +1137,20 @@ export default function SalesPage() {
       if (!blob) return;
 
       const fd = new FormData();
-      fd.append('ticket_number', ticket.ticketNumber);
-      fd.append('customer_name', ticket.customerName || '');
-      fd.append('total_amount', String(ticket.total));
-      fd.append('is_paid', String(ticket.isPaid));
-      if (ticket.paymentAmount) fd.append('payment_amount', String(ticket.paymentAmount));
-      if (ticket.paymentDueDate) fd.append('payment_due_date', ticket.paymentDueDate);
-      saleIds.forEach((id) => fd.append('sale_ids', String(id)));
-      fd.append('image', blob, `${ticket.ticketNumber}.png`);
+      fd.append("ticket_number", ticket.ticketNumber);
+      fd.append("customer_name", ticket.customerName || "");
+      fd.append("total_amount", String(ticket.total));
+      fd.append("is_paid", String(ticket.isPaid));
+      if (ticket.paymentAmount)
+        fd.append("payment_amount", String(ticket.paymentAmount));
+      if (ticket.paymentDueDate)
+        fd.append("payment_due_date", ticket.paymentDueDate);
+      saleIds.forEach((id) => fd.append("sale_ids", String(id)));
+      fd.append("image", blob, `${ticket.ticketNumber}.png`);
 
       await djangoClient.tickets.create(fd);
     } catch (error) {
-      console.error('Erreur lors de l’archivage du ticket', error);
+      console.error("Erreur lors de l’archivage du ticket", error);
     }
   };
 
@@ -1113,8 +1163,6 @@ export default function SalesPage() {
             <ShoppingCart className="h-8 w-8 text-blue-600" />
             Ventes
           </h1>
-
-          
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -1125,9 +1173,7 @@ export default function SalesPage() {
             disabled={loading}
           >
             <RefreshCw
-              className={`mr-2 h-4 w-4 ${
-                loading ? 'animate-spin' : ''
-              }`}
+              className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`}
             />
             Actualiser
           </Button>
@@ -1161,19 +1207,14 @@ export default function SalesPage() {
 
             <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>
-                  Vendre un produit
-                </DialogTitle>
+                <DialogTitle>Vendre un produit</DialogTitle>
 
                 <DialogDescription>
                   Ajouter une nouvelle vente
                 </DialogDescription>
               </DialogHeader>
 
-              <form
-                onSubmit={handleCreateSale}
-                className="space-y-4"
-              >
+              <form onSubmit={handleCreateSale} className="space-y-4">
                 {isAdmin && (
                   <div className="space-y-2">
                     <Label>Magasin</Label>
@@ -1183,7 +1224,7 @@ export default function SalesPage() {
                       onChange={(e) => setStoreSearch(e.target.value)}
                     />
                     <Select
-                      value={selectedStoreId ? String(selectedStoreId) : ''}
+                      value={selectedStoreId ? String(selectedStoreId) : ""}
                       onValueChange={handleStoreChange}
                     >
                       <SelectTrigger>
@@ -1226,10 +1267,10 @@ export default function SalesPage() {
                       className="pl-9"
                       placeholder={
                         isAdmin && !selectedStoreId
-                          ? 'Sélectionnez d\'abord un magasin...'
+                          ? "Sélectionnez d'abord un magasin..."
                           : loadingSaleProducts
-                          ? 'Chargement des produits...'
-                          : 'Rechercher un produit...'
+                            ? "Chargement des produits..."
+                            : "Rechercher un produit..."
                       }
                       value={productSearch}
                       disabled={
@@ -1242,13 +1283,11 @@ export default function SalesPage() {
 
                         setSelectedProduct(null);
 
-                        setSalePrice('');
+                        setSalePrice("");
 
                         setShowProductDropdown(true);
                       }}
-                      onFocus={() =>
-                        setShowProductDropdown(true)
-                      }
+                      onFocus={() => setShowProductDropdown(true)}
                       onBlur={() => {
                         setTimeout(() => {
                           setShowProductDropdown(false);
@@ -1266,12 +1305,8 @@ export default function SalesPage() {
                               key={product.id}
                               type="button"
                               className="flex w-full items-start justify-between gap-2 border-b px-3 py-2 text-left hover:bg-muted"
-                              onMouseDown={(e) =>
-                                e.preventDefault()
-                              }
-                              onClick={() =>
-                                handleProductSelect(product)
-                              }
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => handleProductSelect(product)}
                             >
                               <div>
                                 <p className="text-sm font-medium">
@@ -1290,17 +1325,17 @@ export default function SalesPage() {
                                       product.sell_price ||
                                         product.sale_price ||
                                         product.shell_price ||
-                                        0
-                                    )
-                                  )}{' '}
+                                        0,
+                                    ),
+                                  )}{" "}
                                   Ar
                                 </p>
 
                                 <Badge
                                   variant={
                                     product.initial_quantity > 5
-                                      ? 'default'
-                                      : 'destructive'
+                                      ? "default"
+                                      : "destructive"
                                   }
                                   className="text-[10px]"
                                 >
@@ -1334,8 +1369,9 @@ export default function SalesPage() {
                     <div className="space-y-2">
                       {sellableVariants.map((v) => {
                         const label =
-                          [v.size?.toUpperCase(), v.color].filter(Boolean).join(' / ') ||
-                          `Variante #${v.id}`;
+                          [v.size?.toUpperCase(), v.color]
+                            .filter(Boolean)
+                            .join(" / ") || `Variante #${v.id}`;
 
                         return (
                           <div
@@ -1354,9 +1390,13 @@ export default function SalesPage() {
                               min="0"
                               max={v.quantity}
                               placeholder="0"
-                              value={variantQuantities[v.id] ?? ''}
+                              value={variantQuantities[v.id] ?? ""}
                               onChange={(e) =>
-                                handleVariantQtyChange(v.id, e.target.value, v.quantity)
+                                handleVariantQtyChange(
+                                  v.id,
+                                  e.target.value,
+                                  v.quantity,
+                                )
                               }
                               className="w-20 text-right"
                             />
@@ -1366,7 +1406,8 @@ export default function SalesPage() {
                     </div>
 
                     <p className="pt-1 text-xs text-muted-foreground">
-                      Total sélectionné : <strong>{totalVariantQty}</strong> unité(s)
+                      Total sélectionné : <strong>{totalVariantQty}</strong>{" "}
+                      unité(s)
                     </p>
                   </div>
                 )}
@@ -1376,8 +1417,8 @@ export default function SalesPage() {
                   <div
                     className={`rounded-md p-3 text-sm ${
                       currentStock <= (selectedProduct.alert_threshold || 5)
-                        ? 'bg-orange-50 text-orange-700'
-                        : 'bg-blue-50 text-blue-700'
+                        ? "bg-orange-50 text-orange-700"
+                        : "bg-blue-50 text-blue-700"
                     }`}
                   >
                     Stock disponible : <strong>{currentStock}</strong>
@@ -1385,7 +1426,7 @@ export default function SalesPage() {
                 )}
 
                 {/* QTY + PRICE */}
-                <div className={hasVariants ? '' : 'grid grid-cols-2 gap-4'}>
+                <div className={hasVariants ? "" : "grid grid-cols-2 gap-4"}>
                   {!hasVariants && (
                     <div className="space-y-2">
                       <Label>Quantité</Label>
@@ -1395,9 +1436,7 @@ export default function SalesPage() {
                         min="1"
                         max={selectedProduct ? currentStock : undefined}
                         value={quantity}
-                        onChange={(e) =>
-                          setQuantity(e.target.value)
-                        }
+                        onChange={(e) => setQuantity(e.target.value)}
                       />
                     </div>
                   )}
@@ -1422,7 +1461,7 @@ export default function SalesPage() {
                       onChange={(e) => {
                         if (isAdmin) setSalePrice(e.target.value);
                       }}
-                      className={!isAdmin ? 'bg-muted cursor-not-allowed' : ''}
+                      className={!isAdmin ? "bg-muted cursor-not-allowed" : ""}
                     />
                   </div>
                 </div>
@@ -1453,12 +1492,14 @@ export default function SalesPage() {
                           className="flex items-start justify-between gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2"
                         >
                           <div>
-                            <p className="text-sm font-medium">{item.product.name}</p>
+                            <p className="text-sm font-medium">
+                              {item.product.name}
+                            </p>
                             {item.hasVariants ? (
                               <p className="text-xs text-muted-foreground">
                                 {item.variantLines
                                   ?.map((v) => `${v.label} x${v.quantity}`)
-                                  .join(', ')}
+                                  .join(", ")}
                               </p>
                             ) : (
                               <p className="text-xs text-muted-foreground">
@@ -1495,9 +1536,7 @@ export default function SalesPage() {
                   <Input
                     placeholder="Nom du client"
                     value={customerName}
-                    onChange={(e) =>
-                      setCustomerName(e.target.value)
-                    }
+                    onChange={(e) => setCustomerName(e.target.value)}
                   />
                 </div>
 
@@ -1508,9 +1547,7 @@ export default function SalesPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                       type="button"
-                      variant={
-                        isPaid ? 'secondary' : 'outline'
-                      }
+                      variant={isPaid ? "secondary" : "outline"}
                       onClick={() => setIsPaid(true)}
                     >
                       Payé
@@ -1518,9 +1555,7 @@ export default function SalesPage() {
 
                     <Button
                       type="button"
-                      variant={
-                        !isPaid ? 'secondary' : 'outline'
-                      }
+                      variant={!isPaid ? "secondary" : "outline"}
                       onClick={() => setIsPaid(false)}
                     >
                       Non payé
@@ -1538,9 +1573,7 @@ export default function SalesPage() {
                         min="0"
                         step="0.01"
                         value={paymentAmount}
-                        onChange={(e) =>
-                          setPaymentAmount(e.target.value)
-                        }
+                        onChange={(e) => setPaymentAmount(e.target.value)}
                       />
                     </div>
 
@@ -1550,9 +1583,7 @@ export default function SalesPage() {
                       <Input
                         type="date"
                         value={paymentDueDate}
-                        onChange={(e) =>
-                          setPaymentDueDate(e.target.value)
-                        }
+                        onChange={(e) => setPaymentDueDate(e.target.value)}
                       />
                     </div>
                   </div>
@@ -1562,30 +1593,31 @@ export default function SalesPage() {
                   <div
                     className={`rounded-md border p-3 text-sm ${
                       paymentDueInfo.isOverdue
-                        ? 'border-red-200 bg-red-50 text-red-700'
-                        : 'border-yellow-200 bg-yellow-50 text-yellow-700'
+                        ? "border-red-200 bg-red-50 text-red-700"
+                        : "border-yellow-200 bg-yellow-50 text-yellow-700"
                     }`}
                   >
                     {paymentDueInfo.isOverdue ? (
                       <p>
-                        Retard de paiement :{' '}
-                        {paymentDueInfo.daysLate} jour(s)
+                        Retard de paiement : {paymentDueInfo.daysLate} jour(s)
                       </p>
                     ) : (
-                      <p>
-                        Échéance dans{' '}
-                        {paymentDueInfo.daysUntil} jour(s)
-                      </p>
+                      <p>Échéance dans {paymentDueInfo.daysUntil} jour(s)</p>
                     )}
                   </div>
                 )}
 
                 {/* TOTAL */}
-                {(cart.length > 0 || (salePrice && (hasVariants ? totalVariantQty > 0 : !!quantity))) && (
+                {(cart.length > 0 ||
+                  (salePrice &&
+                    (hasVariants ? totalVariantQty > 0 : !!quantity))) && (
                   <div className="rounded-md border border-green-200 bg-green-50 p-3">
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium text-green-700">
-                        Total {cart.length > 0 ? `(${cart.length} produit${cart.length > 1 ? 's' : ''} au panier${draftAmount > 0 ? ' + sélection en cours' : ''})` : ''}
+                        Total{" "}
+                        {cart.length > 0
+                          ? `(${cart.length} produit${cart.length > 1 ? "s" : ""} au panier${draftAmount > 0 ? " + sélection en cours" : ""})`
+                          : ""}
                       </span>
 
                       <span className="text-lg font-bold text-green-800">
@@ -1609,7 +1641,7 @@ export default function SalesPage() {
                     `Enregistrer la vente${
                       cart.length + (hasValidDraft ? 1 : 0) > 1
                         ? ` (${cart.length + (hasValidDraft ? 1 : 0)} produits)`
-                        : ''
+                        : ""
                     }`
                   )}
                 </Button>
@@ -1650,7 +1682,9 @@ export default function SalesPage() {
                 </div>
               </div>
               <div className="space-y-2 rounded-lg border border-border p-3 sm:p-4">
-                <p className="text-sm font-medium">Date d&apos;échéance paiement</p>
+                <p className="text-sm font-medium">
+                  Date d&apos;échéance paiement
+                </p>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <Input
                     type="date"
@@ -1675,10 +1709,10 @@ export default function SalesPage() {
                 size="sm"
                 className="self-start"
                 onClick={() => {
-                  setSaleStartDate('');
-                  setSaleEndDate('');
-                  setDueStartDate('');
-                  setDueEndDate('');
+                  setSaleStartDate("");
+                  setSaleEndDate("");
+                  setDueStartDate("");
+                  setDueEndDate("");
                 }}
               >
                 Réinitialiser les dates
@@ -1703,11 +1737,7 @@ export default function SalesPage() {
               <Skeleton className="h-8 w-20" />
             ) : (
               <>
-                <div className="text-2xl font-bold">
-                  {todaySales.length}
-                </div>
-
-                
+                <div className="text-2xl font-bold">{todaySales.length}</div>
               </>
             )}
           </CardContent>
@@ -1715,23 +1745,21 @@ export default function SalesPage() {
 
         {isAdmin && (
           <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <DollarSign className="h-4 w-4 text-green-500" />
-              Revenus
-            </CardTitle>
-          </CardHeader>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <DollarSign className="h-4 w-4 text-green-500" />
+                Revenus
+              </CardTitle>
+            </CardHeader>
 
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-8 w-24" />
-            ) : (
-              <div className="text-xl font-bold">
-                {fmt(totalRevenue)} Ar
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            <CardContent>
+              {loading ? (
+                <Skeleton className="h-8 w-24" />
+              ) : (
+                <div className="text-xl font-bold">{fmt(totalRevenue)} Ar</div>
+              )}
+            </CardContent>
+          </Card>
         )}
 
         <Card>
@@ -1746,9 +1774,7 @@ export default function SalesPage() {
             {loading ? (
               <Skeleton className="h-8 w-20" />
             ) : (
-              <div className="text-2xl font-bold">
-                {sales.length}
-              </div>
+              <div className="text-2xl font-bold">{sales.length}</div>
             )}
           </CardContent>
         </Card>
@@ -1766,10 +1792,7 @@ export default function SalesPage() {
               <Skeleton className="h-8 w-20" />
             ) : (
               <div className="text-2xl font-bold">
-                {sales.reduce(
-                  (sum, sale) => sum + sale.quantity,
-                  0
-                )}
+                {sales.reduce((sum, sale) => sum + sale.quantity, 0)}
               </div>
             )}
           </CardContent>
@@ -1787,9 +1810,7 @@ export default function SalesPage() {
             {loading ? (
               <Skeleton className="h-8 w-20" />
             ) : (
-              <div className="text-2xl font-bold">
-                {unpaidSalesCount}
-              </div>
+              <div className="text-2xl font-bold">{unpaidSalesCount}</div>
             )}
           </CardContent>
         </Card>
@@ -1819,19 +1840,14 @@ export default function SalesPage() {
         <CardHeader>
           <CardTitle>Historique des ventes</CardTitle>
 
-          <CardDescription>
-            {filteredSales.length} vente(s)
-          </CardDescription>
+          <CardDescription>{filteredSales.length} vente(s)</CardDescription>
         </CardHeader>
 
         <CardContent>
           {loading ? (
             <div className="space-y-2">
               {Array.from({ length: 5 }).map((_, index) => (
-                <Skeleton
-                  key={index}
-                  className="h-12 w-full"
-                />
+                <Skeleton key={index} className="h-12 w-full" />
               ))}
             </div>
           ) : filteredSales.length === 0 ? (
@@ -1850,25 +1866,15 @@ export default function SalesPage() {
                     <TableHead>Date</TableHead>
                     <TableHead>Client</TableHead>
                     <TableHead>Produit</TableHead>
-                    <TableHead className="text-right">
-                      Qté
-                    </TableHead>
-                    <TableHead className="text-right">
-                      Prix
-                    </TableHead>
-                    <TableHead className="text-right">
-                      Total
-                    </TableHead>
+                    <TableHead className="text-right">Qté</TableHead>
+                    <TableHead className="text-right">Prix</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
                     <TableHead>Paiement</TableHead>
                     <TableHead>Échéance</TableHead>
 
-                    {isManager && (
-                      <TableHead>Vendeur</TableHead>
-                    )}
+                    {isManager && <TableHead>Vendeur</TableHead>}
 
-                    {isManager && (
-                      <TableHead>Magasin</TableHead>
-                    )}
+                    {isManager && <TableHead>Magasin</TableHead>}
 
                     <TableHead className="text-right">Ticket</TableHead>
 
@@ -1881,18 +1887,13 @@ export default function SalesPage() {
                 <TableBody>
                   {filteredSales.map((sale) => (
                     <TableRow key={sale.id}>
-                      <TableCell>
-                        {formatDate(sale.sold_at)}
-                      </TableCell>
+                      <TableCell>{formatDate(sale.sold_at)}</TableCell>
 
-                      <TableCell>
-                        {sale.customer_name || '—'}
-                      </TableCell>
+                      <TableCell>{sale.customer_name || "—"}</TableCell>
 
                       <TableCell>
                         <p className="font-medium">
-                          {sale.product_name ||
-                            `Produit #${sale.product}`}
+                          {sale.product_name || `Produit #${sale.product}`}
                         </p>
                         {sale.variant_label && (
                           <p className="text-xs text-muted-foreground">
@@ -1902,9 +1903,7 @@ export default function SalesPage() {
                       </TableCell>
 
                       <TableCell className="text-right">
-                        <Badge variant="secondary">
-                          {sale.quantity}
-                        </Badge>
+                        <Badge variant="secondary">{sale.quantity}</Badge>
                       </TableCell>
 
                       <TableCell className="text-right">
@@ -1917,30 +1916,22 @@ export default function SalesPage() {
 
                       <TableCell>
                         {sale.is_paid ? (
-                          <Badge className="bg-green-600">
-                            Payé
-                          </Badge>
+                          <Badge className="bg-green-600">Payé</Badge>
                         ) : (
-                          <Badge variant="destructive">
-                            Non payé
-                          </Badge>
+                          <Badge variant="destructive">Non payé</Badge>
                         )}
                       </TableCell>
 
-                      <TableCell>
-                        {renderPaymentDueDate(sale)}
-                      </TableCell>
+                      <TableCell>{renderPaymentDueDate(sale)}</TableCell>
 
                       {isManager && (
-                        <TableCell>
-                          {sale.seller_name || '—'}
-                        </TableCell>
+                        <TableCell>{sale.seller_name || "—"}</TableCell>
                       )}
 
                       {isManager && (
                         <TableCell>
                           <Badge variant="outline">
-                            {sale.shop_name || '-'}
+                            {sale.shop_name || "-"}
                           </Badge>
                         </TableCell>
                       )}
@@ -2030,17 +2021,22 @@ export default function SalesPage() {
           {ticketData && (
             <div className="space-y-3 rounded-md border p-3 text-sm">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{ticketData.storeName || 'Boutique'}</span>
-                <span>{new Date(ticketData.date).toLocaleString('fr-FR')}</span>
+                <span>{ticketData.storeName || "Boutique"}</span>
+                <span>{new Date(ticketData.date).toLocaleString("fr-FR")}</span>
               </div>
 
               <div className="space-y-1">
                 {ticketData.items.map((line, idx) => (
-                  <div key={idx} className="flex items-start justify-between gap-2">
+                  <div
+                    key={idx}
+                    className="flex items-start justify-between gap-2"
+                  >
                     <div>
                       <p className="font-medium">{line.name}</p>
                       {line.variantLabel && (
-                        <p className="text-xs text-muted-foreground">{line.variantLabel}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {line.variantLabel}
+                        </p>
                       )}
                       <p className="text-xs text-muted-foreground">
                         {line.quantity} x {fmt(line.unitPrice)} Ar
@@ -2057,14 +2053,17 @@ export default function SalesPage() {
               </div>
 
               <div className="text-xs text-muted-foreground">
-                Client : {ticketData.customerName || 'Client de passage'} ·{' '}
-                {ticketData.isPaid ? 'Payé' : 'Non payé'}
+                Client : {ticketData.customerName || "Client de passage"} ·{" "}
+                {ticketData.isPaid ? "Payé" : "Non payé"}
               </div>
             </div>
           )}
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setTicketDialogOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setTicketDialogOpen(false)}
+            >
               Fermer
             </Button>
             <Button onClick={() => ticketData && printTicket(ticketData)}>
