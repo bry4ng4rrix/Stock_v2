@@ -54,6 +54,7 @@ import {
   Trash2,
   Printer,
   X,
+  Percent,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -113,6 +114,7 @@ interface CartItem {
   variantLines?: { variantId: number; label: string; quantity: number }[];
   quantity?: number;
   salePrice: number;
+  originalPrice: number;
 }
 
 interface TicketLine {
@@ -175,6 +177,9 @@ export default function SalesPage() {
 
   const [quantity, setQuantity] = useState("1");
   const [salePrice, setSalePrice] = useState("");
+  const [basePrice, setBasePrice] = useState(0);
+  const [showDiscount, setShowDiscount] = useState(false);
+  const [discountInput, setDiscountInput] = useState("");
 
   const [customerName, setCustomerName] = useState("");
 
@@ -237,6 +242,27 @@ export default function SalesPage() {
     return qty * item.salePrice;
   };
 
+  const cartItemDiscountPct = (item: CartItem) => {
+    if (!item.originalPrice || item.originalPrice <= 0) return 0;
+    if (item.salePrice >= item.originalPrice) return 0;
+    return Math.round((1 - item.salePrice / item.originalPrice) * 100);
+  };
+
+  const handleDiscountChange = (rawValue: string) => {
+    if (rawValue === "") {
+      setDiscountInput("");
+      setSalePrice(String(basePrice));
+      return;
+    }
+    const parsed = parseFloat(rawValue);
+    const clamped = Number.isNaN(parsed)
+      ? 0
+      : Math.min(Math.max(0, parsed), 100);
+    setDiscountInput(String(clamped));
+    const reduced = basePrice * (1 - clamped / 100);
+    setSalePrice(String(Math.round(reduced)));
+  };
+
   const cartTotal = useMemo(
     () => cart.reduce((sum, item) => sum + cartItemAmount(item), 0),
     [cart],
@@ -282,6 +308,7 @@ export default function SalesPage() {
         hasVariants: true,
         variantLines,
         salePrice: price,
+        originalPrice: basePrice,
       };
     }
 
@@ -302,6 +329,7 @@ export default function SalesPage() {
       hasVariants: false,
       quantity: qty,
       salePrice: price,
+      originalPrice: basePrice,
     };
   };
 
@@ -309,6 +337,9 @@ export default function SalesPage() {
     setSelectedProduct(null);
     setProductSearch("");
     setSalePrice("");
+    setBasePrice(0);
+    setShowDiscount(false);
+    setDiscountInput("");
     setQuantity("1");
     setVariantQuantities({});
     setShowProductDropdown(false);
@@ -501,6 +532,9 @@ export default function SalesPage() {
     const productPrice =
       product.sell_price || product.sale_price || product.shell_price || 0;
     setSalePrice(String(productPrice));
+    setBasePrice(Number(productPrice));
+    setShowDiscount(false);
+    setDiscountInput("");
     setShowProductDropdown(false);
   };
 
@@ -510,6 +544,9 @@ export default function SalesPage() {
     setSelectedProduct(null);
     setProductSearch("");
     setSalePrice("");
+    setBasePrice(0);
+    setShowDiscount(false);
+    setDiscountInput("");
     setVariantQuantities({});
     setShowProductDropdown(false);
     setSaleProducts([]);
@@ -525,6 +562,9 @@ export default function SalesPage() {
     setProductSearch("");
     setQuantity("1");
     setSalePrice("");
+    setBasePrice(0);
+    setShowDiscount(false);
+    setDiscountInput("");
     setCustomerName("");
     setIsPaid(true);
     setPaymentAmount("");
@@ -1284,6 +1324,9 @@ export default function SalesPage() {
                         setSelectedProduct(null);
 
                         setSalePrice("");
+                        setBasePrice(0);
+                        setShowDiscount(false);
+                        setDiscountInput("");
 
                         setShowProductDropdown(true);
                       }}
@@ -1466,6 +1509,69 @@ export default function SalesPage() {
                   </div>
                 </div>
 
+                {/* DISCOUNT */}
+                {selectedProduct && isAdmin && (
+                  <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Réduction de prix
+                      </Label>
+
+                      <Button
+                        type="button"
+                        variant={showDiscount ? "secondary" : "outline"}
+                        size="sm"
+                        onClick={() => {
+                          if (showDiscount) {
+                            setShowDiscount(false);
+                            setDiscountInput("");
+                            setSalePrice(String(basePrice));
+                          } else {
+                            setShowDiscount(true);
+                          }
+                        }}
+                      >
+                        <Percent className="mr-1 h-3.5 w-3.5" />
+                        {showDiscount ? "Annuler" : "Réduction"}
+                      </Button>
+                    </div>
+
+                    {showDiscount && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            min="0"
+                            max="100"
+                            placeholder="0"
+                            value={discountInput}
+                            onChange={(e) =>
+                              handleDiscountChange(e.target.value)
+                            }
+                            className="w-24"
+                          />
+                          <span className="text-sm text-muted-foreground">
+                            %
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">
+                            Prix initial :{" "}
+                            <span className="line-through">
+                              {fmt(basePrice)} Ar
+                            </span>
+                          </span>
+
+                          <span className="font-semibold text-green-700">
+                            Prix réduit : {fmt(Number(salePrice) || 0)} Ar
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {selectedProduct && (
                   <Button
                     type="button"
@@ -1506,15 +1612,36 @@ export default function SalesPage() {
                                 Quantité : {item.quantity}
                               </p>
                             )}
-                            <p className="text-xs text-muted-foreground">
-                              {fmt(item.salePrice)} Ar / unité
-                            </p>
+                            <div className="flex items-center gap-2">
+                              {cartItemDiscountPct(item) > 0 && (
+                                <span className="text-xs text-muted-foreground line-through">
+                                  {fmt(item.originalPrice)} Ar
+                                </span>
+                              )}
+                              <p className="text-xs text-muted-foreground">
+                                {fmt(item.salePrice)} Ar / unité
+                              </p>
+                              {cartItemDiscountPct(item) > 0 && (
+                                <Badge
+                                  variant="destructive"
+                                  className="text-[10px]"
+                                >
+                                  <Percent className="mr-0.5 h-2.5 w-2.5" />
+                                  -{cartItemDiscountPct(item)}%
+                                </Badge>
+                              )}
+                            </div>
                           </div>
 
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold">
-                              {fmt(cartItemAmount(item))} Ar
-                            </span>
+                            <div className="text-right">
+                              <p className="text-[10px] text-muted-foreground">
+                                Total à payer
+                              </p>
+                              <span className="text-sm font-semibold">
+                                {fmt(cartItemAmount(item))} Ar
+                              </span>
+                            </div>
                             <button
                               type="button"
                               onClick={() => handleRemoveCartItem(item.key)}
@@ -2021,7 +2148,7 @@ export default function SalesPage() {
           {ticketData && (
             <div className="space-y-3 rounded-md border p-3 text-sm">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{ticketData.storeName || "Boutique"}</span>
+                <span>Valhery Wear</span>
                 <span>{new Date(ticketData.date).toLocaleString("fr-FR")}</span>
               </div>
 
