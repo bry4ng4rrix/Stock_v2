@@ -21,6 +21,7 @@ from .models import (
     LoginEvent,
     PlatformRequest,
     Device,
+    EmployeePasswordResetRequest,
 )
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -496,6 +497,21 @@ class PlatformRequestSerializer(serializers.ModelSerializer):
                 "user_agent": obj.login_event.user_agent,
             }
         return None
+
+
+class EmployeePasswordResetRequestSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source="user.full_name", read_only=True)
+    user_email = serializers.CharField(source="user.email", read_only=True)
+    user_role = serializers.CharField(source="user.role", read_only=True)
+    magasin_name = serializers.CharField(source="magasin.shop_name", read_only=True)
+
+    class Meta:
+        model = EmployeePasswordResetRequest
+        fields = [
+            "id", "status", "user_name", "user_email", "user_role", "magasin_name",
+            "created_at", "resolved_at",
+        ]
+        read_only_fields = fields
 
 
 class ChatMessageSerializer(serializers.ModelSerializer):

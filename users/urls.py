@@ -50,6 +50,11 @@ from .views import (
     PublicOfferListView,
     PublicVerifyAccountView,
     PublicPaymentRequestView,
+    PublicForgotPasswordRequestView,
+    PublicForgotPasswordStatusView,
+    PublicForgotPasswordConfirmView,
+    EmployeePasswordResetListView,
+    EmployeePasswordResetResolveView,
 )
 
 from rest_framework_simplejwt.views import TokenViewBase
@@ -132,9 +137,15 @@ urlpatterns = [
     path("my-company/devices/", MyCompanyDevicesView.as_view()),
     path("my-company/subscription/", MyCompanySubscriptionView.as_view()),
     path("my-company/requests/", MyCompanyRequestsView.as_view()),
-    # Public (unauthenticated — subscription-expired page)
+    # Employee (magasin/employer) password reset requests — resolved by their admin
+    path("password-reset-requests/", EmployeePasswordResetListView.as_view()),
+    path("password-reset-requests/<int:request_id>/", EmployeePasswordResetResolveView.as_view()),
+    # Public (unauthenticated — subscription-expired page, forgot password)
     path("public/offers/", PublicOfferListView.as_view()),
     path("public/verify-account/", PublicVerifyAccountView.as_view()),
     path("public/payment-request/", PublicPaymentRequestView.as_view()),
+    path("public/forgot-password/", PublicForgotPasswordRequestView.as_view()),
+    path("public/forgot-password/status/", PublicForgotPasswordStatusView.as_view()),
+    path("public/forgot-password/confirm/", PublicForgotPasswordConfirmView.as_view()),
 ] + router.urls
 

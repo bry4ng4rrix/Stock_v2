@@ -414,6 +414,36 @@ class DjangoAPIClient {
     getPendingUsers: async () => {
       return this.get<any[]>('/users/pending/')
     },
+
+    // Forgot password (no auth): admin accounts are routed to Label
+    // Technology for approval, magasin/employer accounts to their admin.
+    forgotPasswordRequest: async (email: string) => {
+      return this.post<{ queue: 'label' | 'admin'; message: string }>('/users/public/forgot-password/', { email })
+    },
+
+    forgotPasswordStatus: async (email: string) => {
+      return this.get<{ status: 'none' | 'pending' | 'approved' | 'rejected' }>(
+        `/users/public/forgot-password/status/?email=${encodeURIComponent(email)}`
+      )
+    },
+
+    forgotPasswordConfirm: async (email: string, newPassword: string) => {
+      return this.post<{ message: string }>('/users/public/forgot-password/confirm/', {
+        email,
+        new_password: newPassword,
+      })
+    },
+  }
+
+  // ==================== Employee Password Reset Requests (admin side) ====================
+  passwordResetRequests = {
+    list: async (statusFilter?: string) => {
+      const query = statusFilter ? `?status=${statusFilter}` : ''
+      return this.get<any[]>(`/users/password-reset-requests/${query}`)
+    },
+    resolve: async (requestId: number, action: 'approve' | 'reject') => {
+      return this.patch<any>(`/users/password-reset-requests/${requestId}/`, { action })
+    },
   }
 
   // ==================== Products Service ====================

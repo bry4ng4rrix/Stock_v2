@@ -26,8 +26,8 @@ from django.core.management import call_command
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
-from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, Ticket, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest, Device, SubscriptionOffer
-from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, TicketSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer, DeviceSerializer, SubscriptionOfferSerializer
+from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, Ticket, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest, Device, SubscriptionOffer, EmployeePasswordResetRequest
+from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, TicketSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer, DeviceSerializer, SubscriptionOfferSerializer, EmployeePasswordResetRequestSerializer
 from .permissions import IsAdmin, IsPlatformOwner
 from .subscriptions import get_company_magasins, get_company_user_ids, get_company_devices, get_subscription_owner, get_subscription, get_device_limit_info
 from rest_framework_simplejwt.views import TokenViewBase
@@ -779,6 +779,44 @@ class PlatformRequestResolveView(APIView):
         return Response(PlatformRequestSerializer(req).data)
 
 
+# =========================
+# EMPLOYEE PASSWORD RESET (magasin/employer -> admin)
+# =========================
+class EmployeePasswordResetListView(APIView):
+    """Lists forgot-password requests from the admin's magasin/employer
+    accounts, for the admin to approve or reject."""
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        qs = EmployeePasswordResetRequest.objects.filter(admin=request.user).select_related("user", "magasin")
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return Response(EmployeePasswordResetRequestSerializer(qs, many=True).data)
+
+
+class EmployeePasswordResetResolveView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def patch(self, request, request_id):
+        try:
+            req = EmployeePasswordResetRequest.objects.get(id=request_id, admin=request.user)
+        except EmployeePasswordResetRequest.DoesNotExist:
+            return Response({"error": "Demande introuvable"}, status=404)
+
+        action = request.data.get("action")
+        if action not in ("approve", "reject"):
+            return Response({"error": "Action invalide."}, status=400)
+        if req.status != "pending":
+            return Response({"error": "Cette demande a déjà été traitée."}, status=400)
+
+        req.status = "approved" if action == "approve" else "rejected"
+        req.resolved_by = request.user
+        req.resolved_at = timezone.now()
+        req.save()
+        return Response(EmployeePasswordResetRequestSerializer(req).data)
+
+
 class PlatformExpiringSoonView(APIView):
     permission_classes = [IsAuthenticated, IsPlatformOwner]
     THRESHOLD_DAYS = 3
@@ -926,6 +964,132 @@ class PublicPaymentRequestView(APIView):
         req.save()
 
         return Response(PlatformRequestSerializer(req).data, status=201)
+
+
+class PublicForgotPasswordRequestView(APIView):
+    """Step 1 of the forgot-password flow (no auth, since the requester can't
+    log in). Identifies the account by email and routes the request to the
+    right approver: Label Technology for admin (société) accounts, or the
+    société's admin for magasin/employer accounts. There is no email backend
+    configured in this project, so no reset link is sent — the requester
+    comes back later (see PublicForgotPasswordStatusView) to check whether
+    the request was approved and set a new password themselves."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        if not email:
+            return Response({"error": "Email requis."}, status=400)
+
+        user = CustomUser.objects.filter(email__iexact=email).first()
+        if not user:
+            return Response({"error": "Aucun compte avec cet email."}, status=404)
+
+        if user.role == "admin":
+            admin_profile = AdminProfile.objects.filter(user=user).first()
+            if not admin_profile:
+                return Response({"error": "Aucune société associée à ce compte."}, status=404)
+            if PlatformRequest.objects.filter(
+                admin_profile=admin_profile, request_type="password_reset", status="pending"
+            ).exists():
+                return Response({"error": "Une demande est déjà en attente."}, status=400)
+
+            PlatformRequest.objects.create(
+                request_type="password_reset",
+                admin_profile=admin_profile,
+                requested_by=user,
+                contact_email=user.email,
+            )
+            return Response({
+                "queue": "label",
+                "message": "Votre demande a été transmise à Label Technology pour validation.",
+            }, status=201)
+
+        elif user.role in ("magasin", "employer"):
+            admin = None
+            magasin = None
+            if user.role == "magasin":
+                magasin = MagasinProfile.objects.filter(user=user).first()
+                admin = magasin.admin if magasin else None
+            else:
+                employer_profile = EmployerProfile.objects.filter(user=user).first()
+                if employer_profile:
+                    magasin = employer_profile.magasin
+                    admin = employer_profile.admin or (magasin.admin if magasin else None)
+
+            if not admin:
+                return Response({"error": "Aucun administrateur associé à ce compte."}, status=404)
+
+            if EmployeePasswordResetRequest.objects.filter(user=user, status="pending").exists():
+                return Response({"error": "Une demande est déjà en attente."}, status=400)
+
+            EmployeePasswordResetRequest.objects.create(user=user, admin=admin, magasin=magasin)
+            return Response({
+                "queue": "admin",
+                "message": "Votre demande a été transmise à votre administrateur pour validation.",
+            }, status=201)
+
+        return Response({"error": "Réinitialisation non disponible pour ce type de compte."}, status=400)
+
+
+class PublicForgotPasswordStatusView(APIView):
+    """Step 2: the requester comes back with their email to check whether
+    their pending request has been approved yet."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        email = (request.query_params.get("email") or "").strip().lower()
+        user = CustomUser.objects.filter(email__iexact=email).first()
+        if not user:
+            return Response({"status": "none"})
+
+        if user.role == "admin":
+            req = PlatformRequest.objects.filter(
+                requested_by=user, request_type="password_reset", consumed_at__isnull=True
+            ).order_by("-created_at").first()
+        else:
+            req = EmployeePasswordResetRequest.objects.filter(
+                user=user, consumed_at__isnull=True
+            ).order_by("-created_at").first()
+
+        if not req:
+            return Response({"status": "none"})
+        return Response({"status": req.status})
+
+
+class PublicForgotPasswordConfirmView(APIView):
+    """Step 3: once approved, the requester sets their new password directly
+    (no auth — that's the whole point of forgot-password). The approved
+    request is marked consumed so it can't be replayed."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        new_password = request.data.get("new_password") or ""
+        if len(new_password) < 6:
+            return Response({"error": "Le mot de passe doit contenir au moins 6 caractères."}, status=400)
+
+        user = CustomUser.objects.filter(email__iexact=email).first()
+        if not user:
+            return Response({"error": "Aucun compte avec cet email."}, status=404)
+
+        if user.role == "admin":
+            req = PlatformRequest.objects.filter(
+                requested_by=user, request_type="password_reset", status="approved", consumed_at__isnull=True
+            ).order_by("-created_at").first()
+        else:
+            req = EmployeePasswordResetRequest.objects.filter(
+                user=user, status="approved", consumed_at__isnull=True
+            ).order_by("-created_at").first()
+
+        if not req:
+            return Response({"error": "Aucune demande approuvée trouvée pour cet email."}, status=400)
+
+        user.set_password(new_password)
+        user.save()
+        req.consumed_at = timezone.now()
+        req.save()
+        return Response({"message": "Mot de passe mis à jour avec succès."})
 
 
 # =========================

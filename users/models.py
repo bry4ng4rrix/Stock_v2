@@ -203,6 +203,7 @@ class PlatformRequest(models.Model):
         ("device_deletion", "Suppression d'appareil"),
         ("activation", "Activation d'abonnement"),
         ("payment", "Paiement direct"),
+        ("password_reset", "Réinitialisation de mot de passe"),
     )
     STATUS_CHOICES = (
         ("pending", "En attente"),
@@ -233,6 +234,9 @@ class PlatformRequest(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     resolved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="resolved_requests")
     resolved_at = models.DateTimeField(null=True, blank=True)
+    # Set once the requester has actually used an approved password_reset
+    # request to set a new password, so it can't be replayed.
+    consumed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -240,6 +244,38 @@ class PlatformRequest(models.Model):
 
     def __str__(self):
         return f"[{self.get_request_type_display()}] {self.admin_profile.company_name} - {self.status}"
+
+
+# =====================================================
+# EMPLOYEE PASSWORD RESET REQUEST (magasin/employer -> admin)
+# =====================================================
+
+class EmployeePasswordResetRequest(models.Model):
+    """Forgot-password request from a magasin or employer account, routed to
+    the admin(s) of their société for approval (as opposed to admin accounts
+    themselves, whose forgot-password requests go to Label Technology via
+    PlatformRequest)."""
+
+    STATUS_CHOICES = (
+        ("pending", "En attente"),
+        ("approved", "Approuvée"),
+        ("rejected", "Rejetée"),
+    )
+
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="password_reset_requests")
+    admin = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="employee_password_reset_requests", limit_choices_to={"role": "admin"})
+    magasin = models.ForeignKey("MagasinProfile", on_delete=models.SET_NULL, null=True, blank=True, related_name="password_reset_requests")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    resolved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="resolved_employee_password_resets")
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Réinitialisation - {self.user.email} - {self.status}"
 
 
 # =====================================================

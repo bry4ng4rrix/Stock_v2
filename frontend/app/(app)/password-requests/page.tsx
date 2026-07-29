@@ -2,18 +2,23 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { djangoClient } from '@/lib/django-client';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Inbox, RefreshCw, Check, X, Smartphone, Zap, Wallet, KeyRound } from 'lucide-react';
+import { KeyRound, RefreshCw, Check, X } from 'lucide-react';
 
 const STATUS_LABEL: Record<string, string> = {
   pending: 'En attente',
   approved: 'Approuvée',
   rejected: 'Rejetée',
+};
+
+const ROLE_LABEL: Record<string, string> = {
+  magasin: 'Gérant de magasin',
+  employer: 'Commercial',
 };
 
 const getStatusBadgeClass = (status: string) => {
@@ -24,14 +29,7 @@ const getStatusBadgeClass = (status: string) => {
   }
 };
 
-const TYPE_LABEL: Record<string, string> = {
-  device_deletion: "Suppression d'appareil",
-  activation: "Activation d'abonnement",
-  payment: "Paiement direct",
-  password_reset: "Réinitialisation de mot de passe",
-};
-
-export default function LabelRequestsPage() {
+export default function PasswordRequestsPage() {
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('pending');
@@ -40,7 +38,7 @@ export default function LabelRequestsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await djangoClient.platformAdmin.listRequests(
+      const data = await djangoClient.passwordResetRequests.list(
         statusFilter === 'all' ? undefined : statusFilter
       );
       setRequests(data);
@@ -57,7 +55,7 @@ export default function LabelRequestsPage() {
   const handleResolve = async (id: number, action: 'approve' | 'reject') => {
     setResolving(id);
     try {
-      await djangoClient.platformAdmin.resolveRequest(id, action);
+      await djangoClient.passwordResetRequests.resolve(id, action);
       toast.success(action === 'approve' ? 'Demande approuvée' : 'Demande rejetée');
       fetchData();
     } catch (err: any) {
@@ -72,10 +70,10 @@ export default function LabelRequestsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
-            <Inbox className="h-7 w-7 text-blue-600" />Demandes
+            <KeyRound className="h-7 w-7 text-blue-600" />Réinitialisations de mot de passe
           </h1>
           <p className="text-muted-foreground mt-1 text-sm sm:text-base">
-            Demandes de suppression d'appareil et d'activation soumises par les sociétés
+            Demandes de vos gérants de magasin et commerciaux ayant oublié leur mot de passe
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -111,35 +109,15 @@ export default function LabelRequestsPage() {
             <Card key={r.id}>
               <CardContent className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-start gap-3">
-                  {r.request_type === 'device_deletion' ? (
-                    <Smartphone className="h-5 w-5 text-blue-500 mt-0.5 shrink-0" />
-                  ) : r.request_type === 'payment' ? (
-                    <Wallet className="h-5 w-5 text-green-500 mt-0.5 shrink-0" />
-                  ) : r.request_type === 'password_reset' ? (
-                    <KeyRound className="h-5 w-5 text-violet-500 mt-0.5 shrink-0" />
-                  ) : (
-                    <Zap className="h-5 w-5 text-yellow-500 mt-0.5 shrink-0" />
-                  )}
+                  <KeyRound className="h-5 w-5 text-violet-500 mt-0.5 shrink-0" />
                   <div>
                     <p className="font-medium text-sm">
-                      {TYPE_LABEL[r.request_type]} — <span className="text-blue-700">{r.company_name}</span>
+                      {r.user_name} — <span className="text-blue-700">{r.user_email}</span>
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Demandé par {r.requested_by_name} ({r.requested_by_email})
+                      {ROLE_LABEL[r.user_role] || r.user_role}
+                      {r.magasin_name ? ` · Magasin : ${r.magasin_name}` : ''}
                     </p>
-                    {r.device_info && (
-                      <p className="text-xs text-muted-foreground font-mono mt-1">
-                        {r.device_info.ip_address} — {r.device_info.user_agent}
-                      </p>
-                    )}
-                    {r.request_type === 'payment' && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Offre : {r.offer_name || '—'} · Moyen de paiement : {r.payment_method_label || '—'}
-                        {r.payment_reference ? ` (${r.payment_reference})` : ''}
-                        {r.contact_email ? ` · ${r.contact_email}` : ''}
-                      </p>
-                    )}
-                    {r.note && <p className="text-xs text-muted-foreground mt-1">Note : {r.note}</p>}
                     <p className="text-xs text-muted-foreground mt-1">
                       {new Date(r.created_at).toLocaleString('fr-FR')}
                     </p>
