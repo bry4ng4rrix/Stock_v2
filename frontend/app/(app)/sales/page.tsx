@@ -1199,7 +1199,7 @@ export default function SalesPage() {
       {/* HEADER */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="flex items-center gap-3 text-3xl font-bold tracking-tight">
+          <h1 className="flex items-center gap-3 text-3xl font-bold  tracking-tight">
             <ShoppingCart className="h-8 w-8 text-blue-600" />
             Ventes
           </h1>
@@ -1245,7 +1245,7 @@ export default function SalesPage() {
               </Button>
             </DialogTrigger>
 
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Vendre un produit</DialogTitle>
 
@@ -1626,8 +1626,8 @@ export default function SalesPage() {
                                   variant="destructive"
                                   className="text-[10px]"
                                 >
-                                  <Percent className="mr-0.5 h-2.5 w-2.5" />
-                                  -{cartItemDiscountPct(item)}%
+                                  <Percent className="mr-0.5 h-2.5 w-2.5" />-
+                                  {cartItemDiscountPct(item)}%
                                 </Badge>
                               )}
                             </div>
