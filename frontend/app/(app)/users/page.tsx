@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Check, X, ShieldAlert, Users as UsersIcon, Shield, Briefcase, Plus, Loader2, KeyRound, RefreshCw, CreditCard, Smartphone } from 'lucide-react';
+import { Check, X, ShieldAlert, Users as UsersIcon, Shield, Briefcase, Plus, Loader2, KeyRound, RefreshCw, CreditCard, Smartphone, MapPin } from 'lucide-react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { useCurrentUser } from '@/lib/auth/useCurrentUser';
@@ -514,12 +514,13 @@ export default function UsersPage() {
                         <TableHead>Rôle</TableHead>
                         <TableHead>Magasin</TableHead>
                         <TableHead>Poste</TableHead>
+                        <TableHead>Appareil connecté</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredAll.length === 0 ? (
-                        <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Aucun utilisateur trouvé</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Aucun utilisateur trouvé</TableCell></TableRow>
                       ) : filteredAll.map(u => (
                         <TableRow key={u.id}>
                           <TableCell>
@@ -534,6 +535,30 @@ export default function UsersPage() {
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">{u.shop_name || '-'}</TableCell>
                           <TableCell className="text-sm text-muted-foreground">{u.position || '-'}</TableCell>
+                          <TableCell className="text-sm">
+                            {u.device ? (
+                              <div className="space-y-0.5">
+                                <div className="flex items-center gap-1.5">
+                                  <Smartphone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                  <span className="font-medium">{u.device.device_name}</span>
+                                </div>
+                                <div className="text-xs text-muted-foreground font-mono">{u.device.ip_address || '-'}</div>
+                                {u.device.latitude != null && u.device.longitude != null && (
+                                  <a
+                                    href={`https://www.google.com/maps?q=${u.device.latitude},${u.device.longitude}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                                  >
+                                    <MapPin className="h-3 w-3" />
+                                    Voir la localisation
+                                  </a>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Aucun appareil</span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
                               {isAdmin && currentUser && u.id !== currentUser.id && (

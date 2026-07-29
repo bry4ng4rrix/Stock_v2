@@ -38,7 +38,19 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 pass
 
         device_id = (request.data.get("device_id") if request is not None else None) or None
-        device, created, limit_exceeded = get_or_register_device(self.user, device_id, ip_address, user_agent)
+
+        def _to_float(value):
+            try:
+                return float(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        latitude = _to_float(request.data.get("latitude")) if request is not None else None
+        longitude = _to_float(request.data.get("longitude")) if request is not None else None
+
+        device, created, limit_exceeded = get_or_register_device(
+            self.user, device_id, ip_address, user_agent, latitude=latitude, longitude=longitude
+        )
 
         if limit_exceeded:
             from .subscriptions import get_device_limit_info

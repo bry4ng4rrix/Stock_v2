@@ -324,11 +324,13 @@ class DjangoAPIClient {
     },
 
     login: async (email: string, password: string) => {
-      const { getOrCreateDeviceId } = await import('./device')
+      const { getOrCreateDeviceId, getBrowserLocation } = await import('./device')
+      const location = await getBrowserLocation()
       const response = await this.post<{ access: string; refresh: string; device_status?: 'new' | 'known' | null }>('/users/login/', {
         email: email,
         password,
         device_id: getOrCreateDeviceId(),
+        ...(location ? { latitude: location.latitude, longitude: location.longitude } : {}),
       })
       this.saveTokensToStorage({ access: response.access, refresh: response.refresh })
       const user = await this.auth.getCurrentUser()

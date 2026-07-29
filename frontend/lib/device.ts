@@ -13,3 +13,25 @@ export function getOrCreateDeviceId(): string {
   }
   return id;
 }
+
+/** Best-effort exact location via the browser's Geolocation API, captured at
+ * login. Resolves to null (never rejects) if unsupported, denied, or slow —
+ * login must never be blocked waiting on this. */
+export function getBrowserLocation(): Promise<{ latitude: number; longitude: number } | null> {
+  return new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+      },
+      () => resolve(null),
+      { timeout: 4000, maximumAge: 300000 }
+    );
+  });
+}

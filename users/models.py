@@ -291,6 +291,12 @@ class Device(models.Model):
     label = models.CharField(max_length=255, blank=True, null=True)
     user_agent = models.CharField(max_length=500, blank=True, null=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
+    # Exact (GPS/browser-provided) location captured at login time, via the
+    # browser's Geolocation API — best-effort, only present if the user
+    # granted permission. Kept from the last login where it was provided
+    # (not cleared by a later login that didn't supply one).
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
     first_seen = models.DateTimeField(auto_now_add=True)
     last_seen = models.DateTimeField(auto_now=True)
 

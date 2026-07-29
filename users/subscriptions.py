@@ -1,3 +1,5 @@
+import re
+
 from django.db.models import Q
 
 from .models import MagasinProfile, EmployerProfile, LoginEvent, Device, Subscription
@@ -10,6 +12,47 @@ def get_client_ip(request):
     if forwarded_for:
         return forwarded_for.split(",")[0].strip()
     return request.META.get("REMOTE_ADDR")
+
+
+def parse_device_name(user_agent):
+    """Best-effort, dependency-free "Browser sur OS" label from a raw
+    User-Agent string (e.g. "Chrome sur Windows", "Safari sur iPhone")."""
+    if not user_agent:
+        return "Appareil inconnu"
+    ua = user_agent
+
+    if "iPhone" in ua:
+        os_name = "iPhone"
+    elif "iPad" in ua:
+        os_name = "iPad"
+    elif "Android" in ua:
+        m = re.search(r"Android\s([0-9.]+)", ua)
+        os_name = f"Android {m.group(1)}" if m else "Android"
+    elif "Windows NT" in ua:
+        os_name = "Windows"
+    elif "Mac OS X" in ua:
+        os_name = "macOS"
+    elif "Linux" in ua:
+        os_name = "Linux"
+    else:
+        os_name = None
+
+    if "Edg/" in ua or "Edge/" in ua:
+        browser = "Edge"
+    elif "OPR/" in ua or "Opera" in ua:
+        browser = "Opera"
+    elif "Chrome/" in ua and "Chromium" not in ua:
+        browser = "Chrome"
+    elif "Firefox/" in ua:
+        browser = "Firefox"
+    elif "Safari/" in ua and "Chrome" not in ua:
+        browser = "Safari"
+    else:
+        browser = None
+
+    if browser and os_name:
+        return f"{browser} sur {os_name}"
+    return browser or os_name or "Appareil inconnu"
 
 
 def get_subscription_owner(user):
@@ -103,8 +146,13 @@ def get_company_devices(admin_user, limit=20):
     return LoginEvent.objects.filter(user_id__in=user_ids).select_related("user")[:limit]
 
 
-def get_or_register_device(user, device_id, ip_address, user_agent):
+def get_or_register_device(user, device_id, ip_address, user_agent, latitude=None, longitude=None):
     """Resolve the registered-device slot for this login.
+
+    latitude/longitude are the browser's Geolocation-API coordinates, sent
+    by the frontend on a best-effort basis (only if the user granted
+    permission). When absent, the device's last known location is kept
+    as-is rather than being cleared.
 
     Returns (device, created, limit_exceeded):
     - device_id unknown/blank -> (None, False, False), device tracking skipped
@@ -129,6 +177,9 @@ def get_or_register_device(user, device_id, ip_address, user_agent):
         device.user = user
         device.ip_address = ip_address
         device.user_agent = (user_agent or "")[:500]
+        if latitude is not None and longitude is not None:
+            device.latitude = latitude
+            device.longitude = longitude
         device.save()
         return device, False, False
 
@@ -144,6 +195,8 @@ def get_or_register_device(user, device_id, ip_address, user_agent):
         device_id=device_id,
         user_agent=(user_agent or "")[:500],
         ip_address=ip_address,
+        latitude=latitude,
+        longitude=longitude,
     )
     return device, True, False
 

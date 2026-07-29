@@ -29,7 +29,7 @@ from decimal import Decimal, InvalidOperation
 from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, Ticket, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest, Device, SubscriptionOffer, EmployeePasswordResetRequest
 from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, TicketSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer, DeviceSerializer, SubscriptionOfferSerializer, EmployeePasswordResetRequestSerializer
 from .permissions import IsAdmin, IsPlatformOwner
-from .subscriptions import get_company_magasins, get_company_user_ids, get_company_devices, get_subscription_owner, get_subscription, get_device_limit_info
+from .subscriptions import get_company_magasins, get_company_user_ids, get_company_devices, get_subscription_owner, get_subscription, get_device_limit_info, parse_device_name
 from rest_framework_simplejwt.views import TokenViewBase
 from .authentication import CustomTokenObtainPairSerializer
 from .models import Notification
@@ -1967,8 +1967,33 @@ class UsersByMagasinView(APIView):
         response_data = []
         company_users = []
         seen_user_ids = set()
+        device_cache = {}
 
-        def add_company_user(user_obj, shop_name=None, magasin_id=None, position=None):
+        def get_devices_for_admin_profile(admin_profile):
+            """Latest connected Device per user, for the given company —
+            memoized so a company with several magasins doesn't re-query."""
+            if not admin_profile:
+                return {}
+            if admin_profile.id not in device_cache:
+                latest = {}
+                for d in Device.objects.filter(admin_profile=admin_profile).order_by("-last_seen"):
+                    if d.user_id and d.user_id not in latest:
+                        latest[d.user_id] = d
+                device_cache[admin_profile.id] = latest
+            return device_cache[admin_profile.id]
+
+        def build_device_info(device):
+            if not device:
+                return None
+            return {
+                "device_name": parse_device_name(device.user_agent),
+                "ip_address": device.ip_address,
+                "last_seen": device.last_seen,
+                "latitude": device.latitude,
+                "longitude": device.longitude,
+            }
+
+        def add_company_user(user_obj, shop_name=None, magasin_id=None, position=None, device=None):
             if not user_obj or user_obj.id in seen_user_ids:
                 return
             seen_user_ids.add(user_obj.id)
@@ -1981,6 +2006,7 @@ class UsersByMagasinView(APIView):
                 "shop_name": shop_name,
                 "magasin_id": magasin_id,
                 "position": position,
+                "device": build_device_info(device),
             })
 
         # Admin can see all magasins belonging to them
@@ -2003,15 +2029,19 @@ class UsersByMagasinView(APIView):
             return Response({"error": "Role not supported"}, status=403)
 
         for mag in magasins:
+            admin_profile = getattr(mag.admin, "admin_profile", None) if mag.admin else None
+            devices_by_user = get_devices_for_admin_profile(admin_profile)
+
             manager_data = {
                 "id": mag.admin.id,
                 "full_name": mag.admin.full_name,
                 "email": mag.admin.email,
                 "is_confirmed": mag.admin.is_confirmed,
                 "role": mag.admin.role,
+                "device": build_device_info(devices_by_user.get(mag.admin.id)),
             } if mag.admin else None
             if manager_data:
-                add_company_user(mag.admin, mag.shop_name, mag.id)
+                add_company_user(mag.admin, mag.shop_name, mag.id, device=devices_by_user.get(mag.admin.id))
 
             employers_qs = EmployerProfile.objects.filter(magasin=mag)
             employers_list = []
@@ -2023,11 +2053,12 @@ class UsersByMagasinView(APIView):
                     "is_confirmed": emp.user.is_confirmed,
                     "position": emp.position,
                     "role": emp.user.role,
+                    "device": build_device_info(devices_by_user.get(emp.user.id)),
                 })
-                add_company_user(emp.user, mag.shop_name, mag.id, emp.position)
+                add_company_user(emp.user, mag.shop_name, mag.id, emp.position, device=devices_by_user.get(emp.user.id))
 
             for admin_user in mag.admins.all():
-                add_company_user(admin_user, mag.shop_name, mag.id)
+                add_company_user(admin_user, mag.shop_name, mag.id, device=devices_by_user.get(admin_user.id))
 
             response_data.append({
                 "magasin_id": mag.id,
