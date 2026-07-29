@@ -19,10 +19,35 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Check, X, ShieldAlert, Users as UsersIcon, Shield, Briefcase, Plus, Loader2 } from 'lucide-react';
+import { Check, X, ShieldAlert, Users as UsersIcon, Shield, Briefcase, Plus, Loader2, KeyRound, RefreshCw, CreditCard, Smartphone } from 'lucide-react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { useCurrentUser } from '@/lib/auth/useCurrentUser';
+
+const SUB_STATUS_LABEL: Record<string, string> = {
+  active: 'Actif',
+  disabled: 'Désactivé',
+  pending: 'En attente',
+  trial: 'Essai',
+  demo: 'Démo',
+};
+
+const getSubStatusBadgeClass = (status: string) => {
+  switch (status) {
+    case 'active': return 'bg-green-50 text-green-700';
+    case 'trial': return 'bg-blue-50 text-blue-700';
+    case 'demo': return 'bg-purple-50 text-purple-700';
+    case 'pending': return 'bg-orange-50 text-orange-700';
+    case 'disabled': return 'bg-red-50 text-red-700';
+    default: return 'bg-muted text-muted-foreground';
+  }
+};
+
+const REQ_STATUS_LABEL: Record<string, string> = {
+  pending: 'En attente',
+  approved: 'Approuvée',
+  rejected: 'Rejetée',
+};
 
 export default function UsersPage() {
   const { user: currentUser, loading: currentUserLoading, isAdmin, isManager } = useCurrentUser();
@@ -31,6 +56,21 @@ export default function UsersPage() {
   const [pendingUsers, setPendingUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Password reset requests (magasin/employer -> admin)
+  const [passwordRequests, setPasswordRequests] = useState<any[]>([]);
+  const [passwordRequestsLoading, setPasswordRequestsLoading] = useState(true);
+  const [passwordRequestsFilter, setPasswordRequestsFilter] = useState('pending');
+  const [resolvingRequestId, setResolvingRequestId] = useState<number | null>(null);
+
+  // Subscription & devices (société)
+  const [subscription, setSubscription] = useState<any | null>(null);
+  const [myRequests, setMyRequests] = useState<any[]>([]);
+  const [devices, setDevices] = useState<any[]>([]);
+  const [deviceLimit, setDeviceLimit] = useState<{ count: number; limit: number } | null>(null);
+  const [subLoading, setSubLoading] = useState(false);
+  const [requestingActivation, setRequestingActivation] = useState(false);
+  const [requestingDeviceId, setRequestingDeviceId] = useState<number | null>(null);
 
   // Add user dialog
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -85,6 +125,96 @@ export default function UsersPage() {
   useEffect(() => {
     if (!currentUserLoading) fetchUsers();
   }, [currentUserLoading, fetchUsers]);
+
+  const fetchPasswordRequests = useCallback(async () => {
+    setPasswordRequestsLoading(true);
+    try {
+      const data = await djangoClient.passwordResetRequests.list(
+        passwordRequestsFilter === 'all' ? undefined : passwordRequestsFilter
+      );
+      setPasswordRequests(data);
+    } catch (err: any) {
+      toast.error('Erreur lors du chargement des demandes: ' + err.message);
+    } finally {
+      setPasswordRequestsLoading(false);
+    }
+  }, [passwordRequestsFilter]);
+
+  useEffect(() => {
+    if (!currentUserLoading && isAdmin) fetchPasswordRequests();
+  }, [currentUserLoading, isAdmin, fetchPasswordRequests]);
+
+  const handleResolvePasswordRequest = async (id: number, action: 'approve' | 'reject') => {
+    setResolvingRequestId(id);
+    try {
+      await djangoClient.passwordResetRequests.resolve(id, action);
+      toast.success(action === 'approve' ? 'Demande approuvée' : 'Demande rejetée');
+      await fetchPasswordRequests();
+    } catch (err: any) {
+      toast.error(err.message || 'Erreur lors du traitement');
+    } finally {
+      setResolvingRequestId(null);
+    }
+  };
+
+  const fetchSubscriptionData = async () => {
+    setSubLoading(true);
+    try {
+      const [sub, reqs, devs] = await Promise.all([
+        djangoClient.myCompany.getSubscription(),
+        djangoClient.myCompany.listRequests(),
+        djangoClient.myCompany.getDevices(),
+      ]);
+      setSubscription(sub);
+      setMyRequests(reqs);
+      setDevices(devs.devices);
+      setDeviceLimit({ count: devs.count, limit: devs.limit });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSubLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin) fetchSubscriptionData();
+  }, [isAdmin]);
+
+  const hasPendingActivationRequest = myRequests.some(
+    (r) => r.request_type === 'activation' && r.status === 'pending'
+  );
+
+  const handleRequestActivation = async () => {
+    setRequestingActivation(true);
+    try {
+      await djangoClient.myCompany.createRequest({ request_type: 'activation' });
+      toast.success('Demande d\'activation envoyée à Label Technology');
+      fetchSubscriptionData();
+    } catch (err: any) {
+      toast.error(err.message || 'Erreur lors de la demande');
+    } finally {
+      setRequestingActivation(false);
+    }
+  };
+
+  const handleRequestDeviceDeletion = async (deviceId: number) => {
+    setRequestingDeviceId(deviceId);
+    try {
+      await djangoClient.myCompany.createRequest({ request_type: 'device_deletion', device_id: deviceId });
+      toast.success('Demande de suppression envoyée à Label Technology');
+      fetchSubscriptionData();
+    } catch (err: any) {
+      toast.error(err.message || 'Erreur lors de la demande');
+    } finally {
+      setRequestingDeviceId(null);
+    }
+  };
+
+  const pendingDeviceRequestIds = new Set(
+    myRequests
+      .filter((r) => r.request_type === 'device_deletion' && r.status === 'pending')
+      .map((r) => r.device_info?.device_id)
+  );
 
   const handleApprove = async (userId: number) => {
     try {
@@ -233,6 +363,18 @@ export default function UsersPage() {
     admin: 'Administrateur', magasin: 'Gérant', employer: 'Employé',
   }[role] ?? role);
 
+  const PR_STATUS_LABEL: Record<string, string> = {
+    pending: 'En attente', approved: 'Approuvée', rejected: 'Rejetée',
+  };
+
+  const getPrStatusBadgeClass = (status: string) => {
+    switch (status) {
+      case 'approved': return 'bg-green-50 text-green-800 border-green-200';
+      case 'rejected': return 'bg-red-50 text-red-800 border-red-200';
+      default: return 'bg-orange-50 text-orange-800 border-orange-200';
+    }
+  };
+
   if (!isManager && !currentUserLoading) {
     return (
       <div className="p-6">
@@ -331,6 +473,26 @@ export default function UsersPage() {
             En attente
             {pendingUsers.length > 0 && <Badge className="ml-2 bg-orange-100 text-orange-800">{pendingUsers.length}</Badge>}
           </TabsTrigger>
+          {isAdmin && (
+            <TabsTrigger value="password-resets">
+              Réinit. mots de passe
+              {passwordRequests.filter(r => r.status === 'pending').length > 0 && (
+                <Badge className="ml-2 bg-orange-100 text-orange-800">
+                  {passwordRequests.filter(r => r.status === 'pending').length}
+                </Badge>
+              )}
+            </TabsTrigger>
+          )}
+          {isAdmin && (
+            <TabsTrigger value="subscription">
+              <CreditCard className="h-4 w-4 mr-2" />Abonnement
+            </TabsTrigger>
+          )}
+          {isAdmin && (
+            <TabsTrigger value="devices">
+              <Smartphone className="h-4 w-4 mr-2" />Appareils
+            </TabsTrigger>
+          )}
         </TabsList>
 
         {/* Active users */}
@@ -477,6 +639,213 @@ export default function UsersPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* Employee/magasin password reset requests */}
+        {isAdmin && (
+          <TabsContent value="password-resets">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <KeyRound className="h-5 w-5" />
+                    Réinitialisations de mot de passe
+                  </CardTitle>
+                  <CardDescription>
+                    Demandes de vos gérants de magasin et commerciaux ayant oublié leur mot de passe
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Select value={passwordRequestsFilter} onValueChange={setPasswordRequestsFilter}>
+                    <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">En attente</SelectItem>
+                      <SelectItem value="approved">Approuvées</SelectItem>
+                      <SelectItem value="rejected">Rejetées</SelectItem>
+                      <SelectItem value="all">Toutes</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="outline" size="sm" onClick={fetchPasswordRequests} disabled={passwordRequestsLoading}>
+                    <RefreshCw className={`h-4 w-4 ${passwordRequestsLoading ? 'animate-spin' : ''}`} />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {passwordRequestsLoading ? (
+                  <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
+                ) : passwordRequests.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    Aucune demande {passwordRequestsFilter !== 'all' ? PR_STATUS_LABEL[passwordRequestsFilter]?.toLowerCase() : ''}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {passwordRequests.map((r) => (
+                      <div key={r.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border p-4">
+                        <div className="flex items-start gap-3">
+                          <KeyRound className="h-5 w-5 text-violet-500 mt-0.5 shrink-0" />
+                          <div>
+                            <p className="font-medium text-sm">
+                              {r.user_name} — <span className="text-blue-700">{r.user_email}</span>
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {getRoleLabel(r.user_role)}
+                              {r.magasin_name ? ` · Magasin : ${r.magasin_name}` : ''}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {new Date(r.created_at).toLocaleString('fr-FR')}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant="outline" className={getPrStatusBadgeClass(r.status)}>
+                            {PR_STATUS_LABEL[r.status]}
+                          </Badge>
+                          {r.status === 'pending' && (
+                            <>
+                              <Button
+                                size="sm" variant="outline"
+                                className="text-green-700 border-green-200"
+                                disabled={resolvingRequestId === r.id}
+                                onClick={() => handleResolvePasswordRequest(r.id, 'approve')}
+                              >
+                                <Check className="h-4 w-4 mr-1" />Approuver
+                              </Button>
+                              <Button
+                                size="sm" variant="outline"
+                                className="text-red-700 border-red-200"
+                                disabled={resolvingRequestId === r.id}
+                                onClick={() => handleResolvePasswordRequest(r.id, 'reject')}
+                              >
+                                <X className="h-4 w-4 mr-1" />Rejeter
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+
+        {/* Subscription tab */}
+        {isAdmin && (
+          <TabsContent value="subscription">
+            <Card>
+              <CardHeader>
+                <CardTitle>Abonnement</CardTitle>
+                <CardDescription>Statut de l'abonnement de votre société</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {subLoading && !subscription ? (
+                  <Skeleton className="h-24 w-full" />
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <Badge variant="outline" className={getSubStatusBadgeClass(subscription?.status)}>
+                        {SUB_STATUS_LABEL[subscription?.status] || subscription?.status}
+                      </Badge>
+                      {subscription?.status === 'trial' && subscription?.days_left_in_trial !== null && (
+                        <span className="text-sm text-muted-foreground">
+                          {subscription.days_left_in_trial} jour(s) restant(s) à l'essai
+                        </span>
+                      )}
+                    </div>
+
+                    {subscription?.status !== 'active' && subscription?.status !== 'demo' && (
+                      <Button onClick={handleRequestActivation} disabled={requestingActivation || hasPendingActivationRequest}>
+                        {hasPendingActivationRequest
+                          ? 'Demande déjà envoyée'
+                          : requestingActivation
+                            ? 'Envoi...'
+                            : "Demander l'activation"}
+                      </Button>
+                    )}
+
+                    {myRequests.length > 0 && (
+                      <div className="border-t pt-4 space-y-2">
+                        <Label>Historique des demandes</Label>
+                        {myRequests.map((r) => (
+                          <div key={r.id} className="flex items-center justify-between text-sm border rounded-md p-2">
+                            <span>{r.request_type === 'activation' ? "Activation d'abonnement" : "Suppression d'appareil"}</span>
+                            <Badge variant="outline" className={
+                              r.status === 'approved' ? 'bg-green-50 text-green-700' :
+                              r.status === 'rejected' ? 'bg-red-50 text-red-700' : 'bg-orange-50 text-orange-700'
+                            }>
+                              {REQ_STATUS_LABEL[r.status]}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+
+        {/* Devices tab */}
+        {isAdmin && (
+          <TabsContent value="devices">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <CardTitle>Appareils connectés</CardTitle>
+                    <CardDescription>Appareils enregistrés pour les comptes de votre société</CardDescription>
+                  </div>
+                  {deviceLimit && (
+                    <Badge
+                      variant="outline"
+                      className={deviceLimit.count >= deviceLimit.limit ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}
+                    >
+                      {deviceLimit.count} / {deviceLimit.limit} appareils
+                    </Badge>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {deviceLimit && deviceLimit.count >= deviceLimit.limit && (
+                  <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3 mb-4">
+                    Limite d'appareils atteinte. Supprimez un appareil ci-dessous ou contactez
+                    Label Technology pour augmenter votre offre.
+                  </p>
+                )}
+                {subLoading && devices.length === 0 ? (
+                  <Skeleton className="h-24 w-full" />
+                ) : devices.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Aucun appareil enregistré</p>
+                ) : (
+                  <div className="space-y-2">
+                    {devices.map((d) => (
+                      <div key={d.id} className="flex items-center justify-between border rounded-md p-3 text-sm">
+                        <div>
+                          <p className="font-medium">{d.user_name} <span className="text-xs text-muted-foreground">({d.user_role})</span></p>
+                          <p className="text-xs text-muted-foreground truncate max-w-xs">{d.label || d.user_agent}</p>
+                          <p className="text-xs text-muted-foreground font-mono">{d.ip_address}</p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={requestingDeviceId === d.id || pendingDeviceRequestIds.has(d.id)}
+                          onClick={() => handleRequestDeviceDeletion(d.id)}
+                        >
+                          {pendingDeviceRequestIds.has(d.id)
+                            ? 'Demande envoyée'
+                            : requestingDeviceId === d.id
+                              ? 'Envoi...'
+                              : 'Demander la suppression'}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
 
       {/* Edit Role Dialog */}

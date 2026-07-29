@@ -21,7 +21,6 @@ import {
   QrCode,
   MessageCircle,
   ShoppingCart,
-  KeyRound,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -84,12 +83,6 @@ const navigationItems = [
     label: 'Super Admin',
     href: '/users',
     icon: Shield,
-    superAdminOnly: true,
-  },
-  {
-    label: 'Réinit. mots de passe',
-    href: '/password-requests',
-    icon: KeyRound,
     superAdminOnly: true,
   },
   {
