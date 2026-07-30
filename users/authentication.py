@@ -56,8 +56,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             from .subscriptions import get_device_limit_info
             count, limit = get_device_limit_info(self.user)
             raise AuthenticationFailed(
-                f"Limite d'appareils atteinte ({count}/{limit}). "
-                "Supprimez un appareil existant ou contactez Label Technology pour augmenter votre offre.",
+                f"Limite d'appareils atteinte ({count}/{limit}) pour votre société. "
+                "Demandez à votre administrateur de supprimer un appareil existant (Super Admin > Appareils), "
+                "ou connectez-vous depuis un appareil déjà autorisé.",
                 code="device_limit_exceeded",
             )
 

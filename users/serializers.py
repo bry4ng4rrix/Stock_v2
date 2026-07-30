@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework import serializers
@@ -97,6 +97,17 @@ class RegisterSerializer(serializers.ModelSerializer):
                 magasin_user = CustomUser.objects.filter(email=admin_email, role="magasin").first()
                 if magasin_user:
                     magasin = MagasinProfile.objects.get(user=magasin_user)
+            elif admin:
+                # L'employé a donné l'email de l'ADMIN (pas d'un gérant
+                # précis) — sans magasin explicite, il restait `magasin=None`
+                # pour toujours, donc invisible dans la liste de tout magasin
+                # (UsersByMagasinView filtre par magasin exact). Si cet admin
+                # n'a qu'un seul magasin (cas très courant : société avec
+                # juste "Stock Local"), on l'y assigne directement. S'il en a
+                # plusieurs, impossible de deviner lequel : reste non assigné.
+                admin_magasins = MagasinProfile.objects.filter(Q(admin=admin) | Q(admins=admin)).distinct()
+                if admin_magasins.count() == 1:
+                    magasin = admin_magasins.first()
             if not admin and not magasin:
                 raise serializers.ValidationError({"admin_email": "Responsable (administrateur ou gérant) introuvable avec cet email."})
             auto_confirm = requester_is_authenticated_admin and admin is not None and requester.id == admin.id

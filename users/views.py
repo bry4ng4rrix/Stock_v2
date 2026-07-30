@@ -43,8 +43,15 @@ def _variant_label(size, color):
 
 def _check_sale_ownership(user, product):
     """Ensure the requesting user is allowed to record a sale for this product's store."""
-    if user.role in ("admin", "magasin"):
+    if user.role == "admin":
         if not product.magasin or user not in product.magasin.admins.all():
+            raise serializers.ValidationError({"product": "Ce produit n'appartient pas à l'un de vos magasins."})
+    elif user.role == "magasin":
+        # `magasin.admins` ne contient que des comptes admin (co-admins) —
+        # le gérant lui-même (MagasinProfile.user) n'y figure jamais, donc le
+        # vérifier via `.admins` bloquait TOUJOURS le gérant de sa propre
+        # boutique. Même relation que `ProductViewSet.get_queryset()`.
+        if not product.magasin or product.magasin.user_id != user.id:
             raise serializers.ValidationError({"product": "Ce produit n'appartient pas à l'un de vos magasins."})
     elif user.role == "employer":
         try:
@@ -2666,10 +2673,25 @@ class MagasinViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         shop_name = request.data.get("shop_name")
         shop_logo = request.data.get("shop_logo")
+        manager_id = request.data.get("manager_id")
         if shop_name is not None:
             instance.shop_name = shop_name
         if shop_logo is not None and not isinstance(shop_logo, str):
             instance.shop_logo = shop_logo
+        if manager_id is not None:
+            if request.user.role != "admin":
+                return Response({"error": "Seul un administrateur peut modifier le gérant."}, status=403)
+            try:
+                new_manager = CustomUser.objects.get(id=manager_id, role="magasin")
+            except CustomUser.DoesNotExist:
+                return Response({"manager_id": "Gérant introuvable."}, status=404)
+            other_profile = MagasinProfile.objects.filter(user=new_manager).exclude(id=instance.id).first()
+            if other_profile:
+                return Response(
+                    {"manager_id": f"Ce compte est déjà gérant de \"{other_profile.shop_name}\"."},
+                    status=400,
+                )
+            instance.user = new_manager
         instance.save()
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
