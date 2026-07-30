@@ -6,6 +6,70 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-07-30 — Permissions : un co-admin ajouté avait les mêmes droits que le fondateur
+
+**Prompt utilisateur :**
+> verifier dans la page super admin et tous les autre permission car , si on
+> ajoute un autre admin associer dans un meme societer , le nouveau admin
+> ajouter peuvent voir tous les magasin et tous les produit dans le societer
+> ,,, et avoir la meme permission a l'admin au creations de la societe
+
+**Diagnostic :** confirmé dans le code — `AddAdminView` (users/views.py)
+ajoutait volontairement le nouvel admin au champ M2M `admins` de tous les
+magasins du fondateur (commentaire du code : "Give the new admin the exact
+same access as the creator"), et le frontend traitait tout `role === 'admin'`
+comme "Super Admin" (`useCurrentUser.ts`) sans aucune distinction. Deux
+aggravants découverts en creusant : impossible de limiter un nouvel admin à
+certains magasins (tout ou rien), et impossible de révoquer un co-admin une
+fois ajouté — `RoleManagementView`/`DeleteUserView` exigeaient un
+`magasin_profile`/`employer_profile` que les comptes admin n'ont jamais, donc
+même le fondateur ne pouvait pas retirer un admin ajouté par erreur. Pas de
+fuite entre sociétés différentes : le problème était intra-société (fondateur
+↔ co-admins qu'il ajoute lui-même).
+
+**Décision validée avec l'utilisateur :** parmi 4 options proposées
+(restreindre les actions sensibles / limiter les magasins accessibles par
+admin / les deux / diagnostic seul sans code), l'utilisateur a choisi
+**"Restreindre les actions sensibles"** : les co-admins gardent l'accès à
+tous les magasins/produits de la société pour le travail quotidien, mais
+seul le fondateur peut gérer les autres administrateurs, l'abonnement et les
+appareils.
+
+**Modifications apportées :**
+- Backend (`users/permissions.py`) : nouvelle permission `IsCompanyOwner`
+  (comme `IsAdmin`, mais exige en plus que l'utilisateur ait un
+  `AdminProfile` — exclut donc les co-admins).
+- Backend (`users/views.py`) : helper `is_company_owner(user)`. Réservé au
+  fondateur : `AddAdminView` (ajouter un admin), `RoleManagementView`
+  (promouvoir/rétrograder un admin — bloque aussi toute action visant le
+  fondateur lui-même), `DeleteUserView` (supprimer un admin — un co-admin
+  peut désormais réellement être retiré), `MyCompanyDevicesView` /
+  `MyCompanySubscriptionView` / `MyCompanyRequestsView` (abonnement,
+  appareils, demandes à Label Technology). Promouvoir quelqu'un au rôle
+  admin l'ajoute maintenant aussi au M2M `admins` de tous les magasins du
+  fondateur (même logique que `AddAdminView`), pour éviter un admin
+  "fantôme" sans aucun magasin visible.
+- Backend (`users/views.py`, `Myprofile`) : `/users/me/` renvoie désormais
+  `is_company_owner`, et un co-admin hérite du nom/logo de la société du
+  fondateur au lieu d'un champ vide. Bug corrigé au passage : `patch()`
+  créait silencieusement un `AdminProfile` fantôme pour un co-admin dès
+  qu'il modifiait juste son nom/téléphone — ce qui l'aurait fait passer
+  "fondateur" par erreur à la prochaine vérification.
+- Frontend (`lib/auth/useCurrentUser.ts`) : nouveau flag `isCompanyOwner`,
+  distinct de `isAdmin`/`isSuperAdmin` (qui restent vrais pour tout admin,
+  fondateur ou co-admin).
+- Frontend (`app/(app)/users/page.tsx`) : option "Administrateur" (création
+  d'utilisateur + changement de rôle) et onglets "Abonnement"/"Appareils"
+  réservés à `isCompanyOwner` ; boutons "Modifier rôle"/"Supprimer" sur une
+  ligne admin affichés seulement pour le fondateur (les lignes
+  gérant/employé restent gérables par tout admin, co-admin inclus).
+- Frontend (`app/(app)/superadmin/page.tsx`) : sélecteur de rôle désactivé
+  et bouton supprimer masqué sur la ligne admin (toujours le fondateur sur
+  cette page), ces actions n'étant plus jamais permises.
+- Vérification : 10 tests Django ad hoc (créés puis supprimés après
+  validation) confirmant chaque règle une par une ; `npx tsc --noEmit` sans
+  nouvelle erreur.
+
 ## 2026-07-22
 
 **Prompt utilisateur :**
