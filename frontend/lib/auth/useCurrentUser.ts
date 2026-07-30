@@ -19,6 +19,7 @@ export interface CurrentUser {
   store_id?: number | null;
   store_name?: string | null;
   store_logo?: string | null;
+  is_company_owner?: boolean;
 }
 
 export function useCurrentUser() {
@@ -51,6 +52,7 @@ export function useCurrentUser() {
           // Admin: affiche le nom/logo de la société. Magasin/employé: nom/logo du magasin.
           store_name: data.role === 'admin' ? (data.company_name ?? null) : (data.shop_name ?? null),
           store_logo: data.role === 'admin' ? (data.logo ?? null) : (data.shop_logo ?? null),
+          is_company_owner: !!data.is_company_owner,
         });
       } catch (err) {
         console.error('Error fetching current user:', err);
@@ -74,5 +76,10 @@ export function useCurrentUser() {
     isAdminOrSuperAdmin: role === 'admin' || role === 'magasin',
     isManager: role === 'admin' || role === 'magasin',
     isPlatformOwner: role === 'platform_admin',
+    // The admin who actually owns the company (has an AdminProfile) — as
+    // opposed to a co-admin added via "Ajouter un administrateur", who
+    // shares full data access but not company-ownership actions (managing
+    // other admins, subscription, devices). False for co-admins.
+    isCompanyOwner: role === 'admin' && !!user?.is_company_owner,
   };
 }

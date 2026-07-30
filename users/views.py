@@ -28,7 +28,7 @@ from decimal import Decimal, InvalidOperation
 
 from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, Ticket, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest, Device, SubscriptionOffer, EmployeePasswordResetRequest
 from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, TicketSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer, DeviceSerializer, SubscriptionOfferSerializer, EmployeePasswordResetRequestSerializer
-from .permissions import IsAdmin, IsPlatformOwner
+from .permissions import IsAdmin, IsPlatformOwner, IsCompanyOwner
 from .subscriptions import get_company_magasins, get_company_user_ids, get_company_devices, get_subscription_owner, get_subscription, get_device_limit_info, parse_device_name
 from rest_framework_simplejwt.views import TokenViewBase
 from .authentication import CustomTokenObtainPairSerializer
@@ -76,6 +76,18 @@ def _auto_generate_qr(product):
         product.qr_code.save(fname, ContentFile(buf.read()), save=True)
     except Exception:
         pass
+
+
+def is_company_owner(user):
+    """True only for the admin who actually owns the company (has an
+    AdminProfile). Co-admins added via AddAdminView share full data access to
+    the company's magasins/products but are never owners of the company
+    itself — company-level actions (adding/removing admins, subscription,
+    devices) stay reserved to this one account."""
+    return bool(
+        user and user.is_authenticated and user.role == "admin"
+        and AdminProfile.objects.filter(user=user).exists()
+    )
 
 
 def get_user_admin(user):
@@ -203,7 +215,10 @@ class RegisterView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class AddAdminView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    # Only the company's owner (the admin with an AdminProfile) may add a
+    # co-admin — a co-admin adding further co-admins would let access spread
+    # without the founder's knowledge.
+    permission_classes = [IsAuthenticated, IsCompanyOwner]
 
     def post(self, request):
         """Create a new admin user and associate with existing magasins of the requester."""
@@ -273,7 +288,9 @@ class ApproveUserView(APIView):
 # MY COMPANY (tenant side: devices, subscription, requests to Label Technology)
 # =========================
 class MyCompanyDevicesView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    # Owner-only: device/security management is a company-ownership concern,
+    # not something a co-admin should manage on the founder's behalf.
+    permission_classes = [IsAuthenticated, IsCompanyOwner]
 
     def get(self, request):
         owner = get_subscription_owner(request.user)
@@ -289,7 +306,8 @@ class MyCompanyDevicesView(APIView):
 
 
 class MyCompanySubscriptionView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    # Owner-only: billing/subscription is a company-ownership concern.
+    permission_classes = [IsAuthenticated, IsCompanyOwner]
 
     def get(self, request):
         owner = get_subscription_owner(request.user)
@@ -305,7 +323,9 @@ class MyCompanySubscriptionView(APIView):
 
 
 class MyCompanyRequestsView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    # Owner-only: requests to Label Technology (activation, device removal)
+    # are a company-ownership concern.
+    permission_classes = [IsAuthenticated, IsCompanyOwner]
 
     def get(self, request):
         owner = get_subscription_owner(request.user)
@@ -1115,14 +1135,22 @@ class Myprofile(APIView):
             "phone": user.phone,
             "role": user.role,
             "is_confirmed": user.is_confirmed,
+            "is_company_owner": False,
         }
         if user.role == "admin":
             try:
                 p = user.admin_profile
                 data["company_name"] = p.company_name
                 data["logo"] = request.build_absolute_uri(p.logo.url) if p.logo else None
+                data["is_company_owner"] = True
             except AdminProfile.DoesNotExist:
-                pass
+                # Co-admin (added via AddAdminView): no AdminProfile of their
+                # own — show the owner's société name/logo instead of blank.
+                owner = get_subscription_owner(user)
+                owner_profile = getattr(owner, "admin_profile", None) if owner else None
+                if owner_profile:
+                    data["company_name"] = owner_profile.company_name
+                    data["logo"] = request.build_absolute_uri(owner_profile.logo.url) if owner_profile.logo else None
         elif user.role == "magasin":
             try:
                 p = user.magasin_profile
@@ -1159,12 +1187,17 @@ class Myprofile(APIView):
             try:
                 p = user.admin_profile
             except AdminProfile.DoesNotExist:
-                p = AdminProfile(user=user)
-            if company_name is not None:
-                p.company_name = company_name
-            if logo is not None and not isinstance(logo, str):
-                p.logo = logo
-            p.save()
+                # Co-admin: no AdminProfile of their own, and none should be
+                # created here — that would silently turn them into an
+                # "owner" (see is_company_owner) the next time they just
+                # update their name/phone.
+                p = None
+            if p:
+                if company_name is not None:
+                    p.company_name = company_name
+                if logo is not None and not isinstance(logo, str):
+                    p.logo = logo
+                p.save()
         elif user.role == "magasin":
             shop_name = request.data.get("shop_name")
             shop_logo = request.data.get("shop_logo")
@@ -1192,30 +1225,59 @@ class RoleManagementView(APIView):
         if not user_admin:
             return Response({"error": "Permission refusée : entreprise introuvable."}, status=403)
 
-        # Verify user belongs to the same admin organization
-        is_member = CustomUser.objects.filter(
-            Q(id=user_id),
-            Q(magasin_profile__admin=user_admin) | Q(employer_profile__admin=user_admin) | Q(employer_profile__magasin__admin=user_admin)
-        ).exists()
-        if not is_member:
-            return Response({"error": "Permission refusée : cet utilisateur n'appartient pas à votre entreprise."}, status=403)
+        new_role = request.data.get("role")
+        if new_role not in ["admin", "magasin", "employer"]:
+            return Response({"error": "Rôle invalide. Les rôles valides sont: admin, magasin, employer"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user = CustomUser.objects.get(id=user_id)
-            new_role = request.data.get("role")
-            if new_role not in ["admin", "magasin", "employer"]:
-                return Response({"error": "Rôle invalide. Les rôles valides sont: admin, magasin, employer"}, status=status.HTTP_400_BAD_REQUEST)
-            old_role = user.role
-            user.role = new_role
-            user.save()
-            return Response({
-                "message": f"Rôle modifié de {old_role} à {new_role}",
-                "user_id": user.id,
-                "email": user.email,
-                "new_role": user.role,
-            })
         except CustomUser.DoesNotExist:
             return Response({"error": "Utilisateur introuvable"}, status=status.HTTP_404_NOT_FOUND)
+
+        if user.id == current_user.id:
+            return Response({"error": "Vous ne pouvez pas modifier votre propre rôle"}, status=400)
+
+        # Touching an existing admin account, or promoting someone to admin,
+        # is company-ownership territory: reserved to the founder, never to
+        # a co-admin (mirrors AddAdminView) — otherwise a co-admin could
+        # bypass that restriction by promoting/demoting through this endpoint.
+        if user.role == "admin" or new_role == "admin":
+            if not is_company_owner(current_user):
+                return Response({"error": "Seul le fondateur de la société peut gérer les administrateurs."}, status=403)
+            if user.role == "admin" and is_company_owner(user):
+                return Response({"error": "Action impossible sur le fondateur de la société."}, status=403)
+
+        if user.role == "admin":
+            # Admin accounts have no magasin_profile/employer_profile — the
+            # only way to confirm they're actually a co-admin of THIS
+            # company is via the shared magasins' admins M2M.
+            is_member = MagasinProfile.objects.filter(Q(admin=user_admin) | Q(admins=user_admin), admins=user).exists()
+        else:
+            is_member = CustomUser.objects.filter(
+                Q(id=user_id),
+                Q(magasin_profile__admin=user_admin) | Q(employer_profile__admin=user_admin) | Q(employer_profile__magasin__admin=user_admin)
+            ).exists()
+        if not is_member:
+            return Response({"error": "Permission refusée : cet utilisateur n'appartient pas à votre entreprise."}, status=403)
+
+        old_role = user.role
+        user.role = new_role
+        user.save()
+
+        if new_role == "admin" and old_role != "admin":
+            # Mirror AddAdminView: a freshly promoted admin must get the same
+            # magasin access as the founder, otherwise they'd be an "admin"
+            # with zero visible stores.
+            magasins = MagasinProfile.objects.filter(Q(admin=current_user) | Q(admins=current_user)).distinct()
+            for magasin in magasins:
+                magasin.admins.add(user)
+
+        return Response({
+            "message": f"Rôle modifié de {old_role} à {new_role}",
+            "user_id": user.id,
+            "email": user.email,
+            "new_role": user.role,
+        })
 
 # =========================
 # TOTALS VIEW
@@ -2576,6 +2638,14 @@ class DeleteUserView(APIView):
         if not user_admin:
             return Response({"error": "Permission refusée : entreprise introuvable."}, status=403)
 
+        try:
+            user = CustomUser.objects.get(id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "Utilisateur introuvable"}, status=404)
+
+        if user.id == request.user.id:
+            return Response({"error": "Vous ne pouvez pas vous supprimer vous-même"}, status=400)
+
         if current_user.role == "magasin":
             try:
                 magasin = current_user.magasin_profile
@@ -2589,21 +2659,25 @@ class DeleteUserView(APIView):
             except Exception:
                 return Response({"error": "Magasin introuvable"}, status=404)
         else: # admin
-            is_member = CustomUser.objects.filter(
-                Q(id=user_id),
-                Q(magasin_profile__admin=user_admin) | Q(employer_profile__admin=user_admin) | Q(employer_profile__magasin__admin=user_admin)
-            ).exists()
+            if user.role == "admin":
+                # Removing a co-admin (or the founder) is company-ownership
+                # territory: reserved to the founder, and never targetable
+                # at the founder themselves (mirrors RoleManagementView).
+                if not is_company_owner(current_user):
+                    return Response({"error": "Seul le fondateur de la société peut retirer un administrateur."}, status=403)
+                if is_company_owner(user):
+                    return Response({"error": "Action impossible sur le fondateur de la société."}, status=403)
+                is_member = MagasinProfile.objects.filter(Q(admin=user_admin) | Q(admins=user_admin), admins=user).exists()
+            else:
+                is_member = CustomUser.objects.filter(
+                    Q(id=user_id),
+                    Q(magasin_profile__admin=user_admin) | Q(employer_profile__admin=user_admin) | Q(employer_profile__magasin__admin=user_admin)
+                ).exists()
             if not is_member:
                 return Response({"error": "Permission refusée : cet utilisateur n'appartient pas à votre entreprise."}, status=403)
 
-        try:
-            user = CustomUser.objects.get(id=user_id)
-            if user.id == request.user.id:
-                return Response({"error": "Vous ne pouvez pas vous supprimer vous-même"}, status=400)
-            user.delete()
-            return Response({"message": "Utilisateur supprimé"})
-        except CustomUser.DoesNotExist:
-            return Response({"error": "Utilisateur introuvable"}, status=404)
+        user.delete()
+        return Response({"message": "Utilisateur supprimé"})
 
 
 # =========================

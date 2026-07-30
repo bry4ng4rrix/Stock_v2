@@ -184,10 +184,16 @@ export default function SuperAdminPage() {
                   <TableCell className="text-sm text-muted-foreground">{u.email}</TableCell>
                   <TableCell className="text-sm">{u.shop_name || '-'}</TableCell>
                   <TableCell>
+                    {/* The "admin" row here is always the société's founder
+                        (co-admins aren't listed in this view) — role changes
+                        on an admin account are reserved to the founder and
+                        can never target the founder themselves, so this is
+                        never actionable. Disabled rather than removed, to
+                        keep the column layout consistent. */}
                     <Select
                       value={u.role}
                       onValueChange={(v) => handleChangeRole(u.id, v)}
-                      disabled={changingRole === u.id}
+                      disabled={changingRole === u.id || u.role === 'admin'}
                     >
                       <SelectTrigger className="w-32 h-7 text-xs">
                         <SelectValue />
@@ -205,14 +211,16 @@ export default function SuperAdminPage() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-red-500 hover:text-red-700"
-                      onClick={() => handleDelete(u.id, u.full_name)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    {u.role !== 'admin' && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-red-500 hover:text-red-700"
+                        onClick={() => handleDelete(u.id, u.full_name)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

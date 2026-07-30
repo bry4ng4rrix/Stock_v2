@@ -50,7 +50,7 @@ const REQ_STATUS_LABEL: Record<string, string> = {
 };
 
 export default function UsersPage() {
-  const { user: currentUser, loading: currentUserLoading, isAdmin, isManager } = useCurrentUser();
+  const { user: currentUser, loading: currentUserLoading, isAdmin, isManager, isCompanyOwner } = useCurrentUser();
 
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [pendingUsers, setPendingUsers] = useState<any[]>([]);
@@ -177,8 +177,8 @@ export default function UsersPage() {
   };
 
   useEffect(() => {
-    if (isAdmin) fetchSubscriptionData();
-  }, [isAdmin]);
+    if (isCompanyOwner) fetchSubscriptionData();
+  }, [isCompanyOwner]);
 
   const hasPendingActivationRequest = myRequests.some(
     (r) => r.request_type === 'activation' && r.status === 'pending'
@@ -436,7 +436,7 @@ export default function UsersPage() {
                       <SelectContent>
                         <SelectItem value="employer">Employé / Commercial</SelectItem>
                         {isAdmin && <SelectItem value="magasin">Gérant de magasin</SelectItem>}
-                        {isAdmin && <SelectItem value="admin">Administrateur</SelectItem>}
+                        {isCompanyOwner && <SelectItem value="admin">Administrateur</SelectItem>}
                       </SelectContent>
                     </Select>
                   </div>
@@ -483,12 +483,12 @@ export default function UsersPage() {
               )}
             </TabsTrigger>
           )}
-          {isAdmin && (
+          {isCompanyOwner && (
             <TabsTrigger value="subscription">
               <CreditCard className="h-4 w-4 mr-2" />Abonnement
             </TabsTrigger>
           )}
-          {isAdmin && (
+          {isCompanyOwner && (
             <TabsTrigger value="devices">
               <Smartphone className="h-4 w-4 mr-2" />Appareils
             </TabsTrigger>
@@ -561,7 +561,11 @@ export default function UsersPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
-                              {isAdmin && currentUser && u.id !== currentUser.id && (
+                              {/* Managing an admin account (founder or co-admin) is
+                                  ownership territory: only the founder gets these
+                                  buttons on an "admin" row. Gérant/employé rows stay
+                                  manageable by any admin, founder or co-admin. */}
+                              {(u.role === 'admin' ? isCompanyOwner : isAdmin) && currentUser && u.id !== currentUser.id && (
                                 <Button
                                   variant="outline" size="sm"
                                   className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
@@ -570,7 +574,7 @@ export default function UsersPage() {
                                   Modifier rôle
                                 </Button>
                               )}
-                              {isAdmin && currentUser && u.id !== currentUser.id && (
+                              {(u.role === 'admin' ? isCompanyOwner : isAdmin) && currentUser && u.id !== currentUser.id && (
                                 <Button
                                   variant="ghost" size="sm"
                                   className="text-red-600 hover:text-red-700 hover:bg-red-50"
@@ -755,7 +759,7 @@ export default function UsersPage() {
         )}
 
         {/* Subscription tab */}
-        {isAdmin && (
+        {isCompanyOwner && (
           <TabsContent value="subscription">
             <Card>
               <CardHeader>
@@ -812,7 +816,7 @@ export default function UsersPage() {
         )}
 
         {/* Devices tab */}
-        {isAdmin && (
+        {isCompanyOwner && (
           <TabsContent value="devices">
             <Card>
               <CardHeader>
@@ -886,7 +890,7 @@ export default function UsersPage() {
               <Select value={newRoleValue} onValueChange={setNewRoleValue}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="admin">Administrateur</SelectItem>
+                  {isCompanyOwner && <SelectItem value="admin">Administrateur</SelectItem>}
                   <SelectItem value="magasin">Gérant de magasin</SelectItem>
                   <SelectItem value="employer">Employé / Commercial</SelectItem>
                 </SelectContent>
