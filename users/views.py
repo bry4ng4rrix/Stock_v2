@@ -180,7 +180,7 @@ class CustomLoginView(TokenViewBase):
 # =========================
 class RegisterView(APIView):
     def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
+        serializer = RegisterSerializer(data=request.data, context={"request": request})
         if serializer.is_valid():
             user = serializer.save()
             # If the new user is an admin, create a default "Stock Local" store linked to this admin.
@@ -2043,6 +2043,14 @@ class UsersByMagasinView(APIView):
             if manager_data:
                 add_company_user(mag.admin, mag.shop_name, mag.id, device=devices_by_user.get(mag.admin.id))
 
+            # Le vrai compte "gérant" (role=magasin, MagasinProfile.user) n'était
+            # jamais exposé nulle part dans cette réponse — seul l'admin de la
+            # société (mag.admin, ci-dessus) apparaissait sous le nom "manager".
+            # Un gérant nouvellement créé/approuvé restait donc invisible dans
+            # toute liste basée sur cet endpoint (magasins/users/).
+            if mag.user:
+                add_company_user(mag.user, mag.shop_name, mag.id, device=devices_by_user.get(mag.user.id))
+
             employers_qs = EmployerProfile.objects.filter(magasin=mag)
             employers_list = []
             for emp in employers_qs:
@@ -2500,9 +2508,15 @@ class PendingUsersView(APIView):
             return Response({"error": "Permission refusée"}, status=403)
 
         if user.role == "admin":
+            # NB: le filtre ne couvrait que les employés (employer_profile) ;
+            # les gérants de magasin en attente (magasin_profile) n'apparaissaient
+            # donc jamais ici, alors que le code plus bas sait déjà les afficher
+            # (voir `elif u.role == "magasin"`) — bug d'oubli, pas un choix voulu.
             pending_qs = CustomUser.objects.filter(
             Q(is_confirmed=False),
-            Q(employer_profile__admin=user) | Q(employer_profile__magasin__admin=user)
+            Q(employer_profile__admin=user)
+            | Q(employer_profile__magasin__admin=user)
+            | Q(magasin_profile__admin=user)
         ).distinct()
         else:
             try:

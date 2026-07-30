@@ -56,6 +56,16 @@ class RegisterSerializer(serializers.ModelSerializer):
         position = validated_data.pop("position", None)
         password = validated_data.pop("password")
 
+        # Si un admin déjà authentifié crée lui-même ce compte (depuis l'app,
+        # pas l'auto-inscription publique), on l'active directement — pas
+        # besoin d'une étape d'approbation manuelle séparée pour un compte
+        # que l'admin vient de créer de ses propres mains.
+        request = self.context.get("request")
+        requester = getattr(request, "user", None)
+        requester_is_authenticated_admin = bool(
+            requester and requester.is_authenticated and requester.role == "admin"
+        )
+
         if role == "admin":
             company_name = company_name or validated_data.get("full_name") or "Entreprise"
             user = CustomUser.objects.create(username=username, is_confirmed=True, **validated_data)
@@ -73,7 +83,8 @@ class RegisterSerializer(serializers.ModelSerializer):
                 admin = CustomUser.objects.get(email=admin_email, role="admin")
             except CustomUser.DoesNotExist:
                 raise serializers.ValidationError({"admin_email": "Administrateur introuvable avec cet email."})
-            user = CustomUser.objects.create(username=username, is_confirmed=False, **validated_data)
+            auto_confirm = requester_is_authenticated_admin and requester.id == admin.id
+            user = CustomUser.objects.create(username=username, is_confirmed=auto_confirm, **validated_data)
             user.set_password(password)
             user.save()
             magasin = MagasinProfile.objects.create(user=user, admin=admin, shop_name=shop_name)
@@ -88,7 +99,8 @@ class RegisterSerializer(serializers.ModelSerializer):
                     magasin = MagasinProfile.objects.get(user=magasin_user)
             if not admin and not magasin:
                 raise serializers.ValidationError({"admin_email": "Responsable (administrateur ou gérant) introuvable avec cet email."})
-            user = CustomUser.objects.create(username=username, is_confirmed=False, **validated_data)
+            auto_confirm = requester_is_authenticated_admin and admin is not None and requester.id == admin.id
+            user = CustomUser.objects.create(username=username, is_confirmed=auto_confirm, **validated_data)
             user.set_password(password)
             user.save()
             EmployerProfile.objects.create(user=user, admin=admin, magasin=magasin, position=position)

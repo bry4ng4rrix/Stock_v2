@@ -121,6 +121,44 @@ export default function SuperAdminPage() {
         </Card>
       </div>
 
+      {/* All teams table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Toutes les équipes</CardTitle>
+          <CardDescription>{stores.length} équipe(s) enregistrée(s)</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Magasin</TableHead>
+                <TableHead>Gérant</TableHead>
+                <TableHead>Membres</TableHead>
+                <TableHead>Statut</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {stores.map((s: any) => {
+                const isActive = !!s.manager?.is_confirmed;
+                const memberCount = (s.employers?.length || 0) + (s.manager ? 1 : 0);
+                return (
+                  <TableRow key={s.magasin_id}>
+                    <TableCell className="font-medium">{s.shop_name}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{s.manager?.full_name || '-'}</TableCell>
+                    <TableCell className="text-sm">{memberCount}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={isActive ? 'text-green-700 border-green-200' : 'text-orange-700 border-orange-200'}>
+                        {isActive ? 'Actif' : 'Inactif'}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
       {/* All users table */}
       <Card>
         <CardHeader>
