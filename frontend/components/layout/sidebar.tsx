@@ -21,6 +21,7 @@ import {
   QrCode,
   MessageCircle,
   ShoppingCart,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -77,6 +78,12 @@ const navigationItems = [
     label: 'Magasins',
     href: '/stores',
     icon: Store,
+    superAdminOnly: true,
+  },
+  {
+    label: 'Transferts',
+    href: '/transfers',
+    icon: ArrowLeftRight,
     superAdminOnly: true,
   },
   {

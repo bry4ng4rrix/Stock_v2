@@ -6,6 +6,62 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-07-30 (suite 2) — Login sans modal de confirmation + modal de transfert agrandi
+
+**Prompt utilisateur :**
+> sur la login , verifier l'id de l'appareille connecter et supprimer le
+> modal d'enregistrement des nouvelle appareille et , enregistre automatique
+> si l'id de l'appareille n'est mas encore enregistre dans le db , sinon
+> afficher le message de limite des appareille .
+> Dans la page produit , modifier le modale du transfert du produit le width
+> en plus large avec l'hauteur grand et un overflow pour que on peut voire
+> en detaille tous les produit a transfere, ajuster aussi pour qu on voi
+> clairement tout les donne sans limitation de width
+
+**Modifications apportées :**
+- Frontend (`components/auth/login-form.tsx`) : le backend enregistrait déjà
+  l'appareil automatiquement et bloquait déjà avec un message clair si la
+  limite était dépassée (`get_or_register_device`, `authentication.py`) — le
+  modal "Nouvel appareil détecté" ne faisait que bloquer la redirection en
+  attendant un clic inutile. Supprimé entièrement (state `newDeviceOpen`/
+  `pendingRedirect`, fonction `confirmNewDevice`, le `<Dialog>` et les
+  imports devenus inutiles) : la connexion redirige désormais directement,
+  que l'appareil soit nouveau ou connu ; le toast de limite d'appareils est
+  inchangé.
+- Frontend (`components/transfer-products-dialog.tsx`) : `DialogContent`
+  passé de `max-w-7xl max-h-[90vh]` à `w-[95vw] max-w-450 h-[92vh]
+  max-h-[92vh]` (hauteur fixe au lieu de "au plus", pour que le contenu
+  utilise vraiment l'espace disponible). Les `ScrollArea` de la liste de
+  produits et du panier de transfert passent d'une hauteur fixe (`h-64
+  lg:h-72`, `h-40`) à `flex-1 min-h-0` pour remplir tout l'espace vertical
+  disponible ; celle du choix du magasin de destination passe de `h-28` à
+  `h-40`.
+
+## 2026-07-30 (suite) — Push git sans toucher aux données du VPS
+
+**Prompt utilisateur :**
+> et fait un push git pour envoyer les code sans toucher au donne dans
+> db.sqlite dans le vps
+
+**Constat :** `db.sqlite3` (et ses backups) sont suivis par git malgré le
+`.gitignore` — c'est bien la base de données live du VPS : le déploiement
+(`.github/workflows/deploy.yml`) fait un `git pull origin main` directement
+dans `/home/garrix/Stock_v2`, et `docker-compose.yml` (utilisé en prod, pas
+`docker-compose.prod.yml` qui lui utilise Postgres) monte tout le dépôt en
+volume (`.:/app`) avec `DB_ENGINE=sqlite3` — le fichier suivi par git est
+donc directement le fichier que Django lit/écrit en live. La branche locale
+avait divergé d'`origin/main` (1 commit distant "update db" : croissance
+réelle de `db.sqlite3` + nouvelles photos produit dans `media/`, absent en
+local ; 2 commits locaux avec le correctif de permissions ci-dessous).
+
+**Résolution :** `git pull --rebase origin main` (même convention que
+`git-sync.sh`) — rebase sans conflit car aucun fichier en commun entre les
+deux séries de commits. Vérifié par `git diff` que `db.sqlite3` et `media/`
+restent strictement identiques au commit distant après rebase. Push
+finalement effectué par l'utilisateur lui-même (pas d'identifiants GitHub
+disponibles dans cette session : pas de credential helper, `gh` absent,
+aucune clé dans `~/.ssh`).
+
 ## 2026-07-30 (suite) — Même restriction portée sur l'app mobile Flutter
 
 **Contexte :** l'app mobile (`valhery_wear`, dépôt séparé) consomme la même
