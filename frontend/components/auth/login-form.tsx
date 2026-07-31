@@ -7,16 +7,8 @@ import { djangoClient } from '@/lib/django-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { Loader2, Mail, Lock, Eye, EyeOff, MonitorSmartphone } from 'lucide-react';
+import { Loader2, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 
 const ERRORS: Record<string, string> = {
   'Invalid login credentials':    'Email ou mot de passe incorrect.',
@@ -45,8 +37,6 @@ export function LoginForm() {
   const [password, setPassword] = useState('');
   const [showPw, setShowPw]     = useState(false);
   const [loading, setLoading]   = useState(false);
-  const [newDeviceOpen, setNewDeviceOpen] = useState(false);
-  const [pendingRedirect, setPendingRedirect] = useState<string | null>(null);
 
   useEffect(() => {
     const prefill = searchParams.get('email');
@@ -73,13 +63,9 @@ export function LoginForm() {
       toast.success('Connexion réussie !');
       const destination = (response.user as any).raw_role === 'platform_admin' ? '/label' : '/dashboard';
 
-      if (response.device_status === 'new') {
-        setPendingRedirect(destination);
-        setNewDeviceOpen(true);
-        setLoading(false);
-        return;
-      }
-
+      // L'appareil est enregistré automatiquement côté backend (nouveau ou
+      // déjà connu) — seule une limite d'appareils dépassée bloque la
+      // connexion (voir le catch ci-dessous), pas besoin de confirmation ici.
       goTo(destination);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Erreur de connexion';
@@ -97,11 +83,6 @@ export function LoginForm() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const confirmNewDevice = () => {
-    setNewDeviceOpen(false);
-    if (pendingRedirect) goTo(pendingRedirect);
   };
 
   return (
@@ -188,24 +169,6 @@ export function LoginForm() {
           </Link>
         </p>
       </CardContent>
-
-      <Dialog open={newDeviceOpen} onOpenChange={(open) => !open && confirmNewDevice()}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <MonitorSmartphone className="h-5 w-5 text-blue-600" />
-              Nouvel appareil détecté
-            </DialogTitle>
-            <DialogDescription>
-              Cet appareil ou ce navigateur se connecte pour la première fois à ce compte.
-              Il vient d'être enregistré parmi les appareils autorisés de votre société.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button onClick={confirmNewDevice}>Confirmer et continuer</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Card>
   );
 }

@@ -6,6 +6,29 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-07-30 (suite) — Même restriction portée sur l'app mobile Flutter
+
+**Contexte :** l'app mobile (`valhery_wear`, dépôt séparé) consomme la même
+API que le frontend web mais n'avait pas encore la notion de fondateur vs
+co-admin — `AuthRepository.addAdmin()` existait déjà côté Flutter (appel à
+`add-admin/`) mais n'était relié à aucun écran.
+
+**Modifications apportées (dans `valhery_wear`, pas ce dépôt) :**
+- `lib/models/user.dart` : nouveau champ `AppUser.isCompanyOwner`, lu depuis
+  `is_company_owner` sur `/users/me/`.
+- `lib/features/superadmin/superadmin_screen.dart` (fusion Utilisateurs +
+  Super Admin côté Flutter) : onglets "Abonnement"/"Appareils" masqués pour
+  un co-admin (pas seulement désactivés) ; option "Administrateur" retirée
+  des menus de rôle (création + changement) si l'utilisateur courant n'est
+  pas le fondateur ; icônes modifier/supprimer masquées sur une ligne admin
+  sauf pour le fondateur ; badge "Fondateur" ajouté sur sa propre ligne ;
+  dialogue de création relié à `addAdmin()` (au lieu de `register()`) pour
+  le rôle Administrateur.
+- `lib/features/settings/settings_screen.dart` : carte d'édition
+  société/logo masquée pour un co-admin (un `PATCH /me/` avec
+  `company_name`/`logo` y répond 200 sans rien changer faute d'`AdminProfile`
+  propre — mieux vaut ne pas montrer un formulaire sans effet réel).
+
 ## 2026-07-30 — Permissions : un co-admin ajouté avait les mêmes droits que le fondateur
 
 **Prompt utilisateur :**
