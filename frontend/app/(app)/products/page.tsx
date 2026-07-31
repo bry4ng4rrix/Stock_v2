@@ -1075,22 +1075,7 @@ export default function ProductsPage() {
               Scanner QR
             </Link>
           </Button>
-          {isAdmin && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleOpenTransfer}
-              disabled={
-                selectedProductIds.size === 0 || selectedStoreId === "all"
-              }
-            >
-              <ArrowLeftRight className="h-4 w-4 mr-2" />
-              Transférer
-              {selectedProductIds.size > 0
-                ? ` (${selectedProductIds.size})`
-                : ""}
-            </Button>
-          )}
+
           {isAdmin && (
             <>
               <input
@@ -1135,11 +1120,12 @@ export default function ProductsPage() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Restaurer ce backup ?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Cette action va <strong>remplacer toutes les données actuelles</strong>{" "}
-                      (produits, ventes, mouvements, utilisateurs, magasins) ainsi que
-                      toutes les images et QR codes par le contenu de{" "}
-                      <strong>{pendingBackupFile?.name}</strong>. Cette opération est
-                      irréversible. Voulez-vous continuer ?
+                      Cette action va{" "}
+                      <strong>remplacer toutes les données actuelles</strong>{" "}
+                      (produits, ventes, mouvements, utilisateurs, magasins)
+                      ainsi que toutes les images et QR codes par le contenu de{" "}
+                      <strong>{pendingBackupFile?.name}</strong>. Cette
+                      opération est irréversible. Voulez-vous continuer ?
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
