@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { Shield, Users, Store, RefreshCw, Trash2 } from 'lucide-react';
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
 
 const roleLabel: Record<string, string> = {
   admin: 'Administrateur',
@@ -25,6 +26,7 @@ export default function SuperAdminPage() {
   const [stores, setStores] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [changingRole, setChangingRole] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
 
   useEffect(() => {
     if (!userLoading && !isSuperAdmin) {
@@ -66,15 +68,11 @@ export default function SuperAdminPage() {
     }
   };
 
-  const handleDelete = async (userId: number, name: string) => {
-    if (!confirm(`Supprimer ${name} ?`)) return;
-    try {
-      await djangoClient.delete(`/users/delete/${userId}/`);
-      toast.success('Utilisateur supprimé');
-      fetchData();
-    } catch (err: any) {
-      toast.error(err.message || 'Erreur');
-    }
+  const handleConfirmDelete = async (password: string) => {
+    if (!deleteTarget) return;
+    await djangoClient.delete(`/users/delete/${deleteTarget.id}/`, { password });
+    toast.success('Utilisateur supprimé');
+    fetchData();
   };
 
   if (userLoading || loading) {
@@ -216,7 +214,7 @@ export default function SuperAdminPage() {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-red-500 hover:text-red-700"
-                        onClick={() => handleDelete(u.id, u.full_name)}
+                        onClick={() => setDeleteTarget({ id: u.id, name: u.full_name })}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -228,6 +226,20 @@ export default function SuperAdminPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Supprimer cet utilisateur"
+        description={
+          <>
+            Vous êtes sur le point de supprimer définitivement{' '}
+            <span className="font-medium text-foreground">{deleteTarget?.name}</span>.
+            Cette action est irréversible. Entrez votre mot de passe pour confirmer.
+          </>
+        }
+        onConfirm={handleConfirmDelete}
+      />
     </div>
   );
 }

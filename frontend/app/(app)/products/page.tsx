@@ -52,6 +52,7 @@ import {
   TransferProductsDialog,
   type TransferCartItem,
 } from "@/components/transfer-products-dialog";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { toast } from "sonner";
 import { useRealtimeRefresh } from "@/lib/hooks/useRealtimeRefresh";
 import { generateSimpleQRCode } from "@/lib/qrcode-generator";
@@ -236,7 +237,6 @@ export default function ProductsPage() {
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingProduct, setDeletingProduct] = useState<any>(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
   const [addStockDialogOpen, setAddStockDialogOpen] = useState(false);
   const [addingProduct, setAddingProduct] = useState<any>(null);
   const [variantsDialogProduct, setVariantsDialogProduct] = useState<
@@ -933,23 +933,11 @@ export default function ProductsPage() {
     }
   };
 
-  const handleDelete = async () => {
+  const handleConfirmDeleteProduct = async (password: string) => {
     if (!deletingProduct) return;
-    setDeleteLoading(true);
-    try {
-      await djangoClient.products.delete(deletingProduct.id);
-      toast.success("Produit supprimé");
-      setDeleteDialogOpen(false);
-      setProducts((prev) => prev.filter((p) => p.id !== deletingProduct.id));
-    } catch (err: any) {
-      toast.success("Produit supprimé");
-      setDeleteDialogOpen(false);
-      fetchData();
-
-      // toast.error(err.message ?? 'Erreur');
-    } finally {
-      setDeleteLoading(false);
-    }
+    await djangoClient.products.delete(deletingProduct.id, password);
+    toast.success("Produit supprimé");
+    setProducts((prev) => prev.filter((p) => p.id !== deletingProduct.id));
   };
 
   return (
@@ -1625,34 +1613,19 @@ export default function ProductsPage() {
       </Dialog>
 
       {/* Delete Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Supprimer le produit</DialogTitle>
-            <DialogDescription>
-              Cette action est irréversible.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setDeleteDialogOpen(false)}
-            >
-              Annuler
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteLoading}
-            >
-              {deleteLoading && (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              )}
-              Supprimer
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDeleteDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title="Supprimer le produit"
+        description={
+          <>
+            Vous êtes sur le point de supprimer définitivement{' '}
+            <span className="font-medium text-foreground">{deletingProduct?.name}</span>.
+            Cette action est irréversible. Entrez votre mot de passe pour confirmer.
+          </>
+        }
+        onConfirm={handleConfirmDeleteProduct}
+      />
 
       {/* Add Stock Dialog (for managers) */}
       <Dialog open={addStockDialogOpen} onOpenChange={setAddStockDialogOpen}>

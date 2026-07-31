@@ -1917,6 +1917,11 @@ class ProductViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         if request.user.role != "admin":
             return Response({"error": "Seul admin peut supprimer"}, status=403)
+        password = request.data.get("password")
+        if not password:
+            return Response({"error": "Mot de passe requis pour confirmer la suppression."}, status=400)
+        if not request.user.check_password(password):
+            return Response({"error": "Mot de passe incorrect."}, status=400)
         instance = self.get_object()
         Movement.objects.create(
             product=instance,
@@ -2029,6 +2034,20 @@ class NotificationViewSet(viewsets.ModelViewSet):
 # =========================
 # USERS BY MAGASIN VIEW
 # =========================
+class LogoutEventView(APIView):
+    """Best-effort logout timestamp: JWT sessions have no server-side
+    invalidation, so this only records an explicit "Déconnexion" click, not
+    token expiry or the tab being closed."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        last_event = LoginEvent.objects.filter(user=request.user).order_by("-created_at").first()
+        if last_event:
+            last_event.logged_out_at = timezone.now()
+            last_event.save(update_fields=["logged_out_at"])
+        return Response({"message": "Déconnexion enregistrée"})
+
+
 class UsersByMagasinView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
@@ -2037,6 +2056,18 @@ class UsersByMagasinView(APIView):
         company_users = []
         seen_user_ids = set()
         device_cache = {}
+        login_event_cache = {}
+
+        def get_login_times(user_id):
+            """Most recent login/logout timestamps for a user, memoized so a
+            company with many members doesn't re-query per magasin."""
+            if user_id not in login_event_cache:
+                last_event = LoginEvent.objects.filter(user_id=user_id).order_by("-created_at").first()
+                login_event_cache[user_id] = {
+                    "last_login_at": last_event.created_at if last_event else None,
+                    "last_logout_at": last_event.logged_out_at if last_event else None,
+                }
+            return login_event_cache[user_id]
 
         def get_devices_for_admin_profile(admin_profile):
             """Latest connected Device per user, for the given company —
@@ -2076,6 +2107,7 @@ class UsersByMagasinView(APIView):
                 "magasin_id": magasin_id,
                 "position": position,
                 "device": build_device_info(device),
+                **get_login_times(user_obj.id),
             })
 
         # Admin can see all magasins belonging to them
@@ -2108,6 +2140,7 @@ class UsersByMagasinView(APIView):
                 "is_confirmed": mag.admin.is_confirmed,
                 "role": mag.admin.role,
                 "device": build_device_info(devices_by_user.get(mag.admin.id)),
+                **get_login_times(mag.admin.id),
             } if mag.admin else None
             if manager_data:
                 add_company_user(mag.admin, mag.shop_name, mag.id, device=devices_by_user.get(mag.admin.id))
@@ -2131,6 +2164,7 @@ class UsersByMagasinView(APIView):
                     "position": emp.position,
                     "role": emp.user.role,
                     "device": build_device_info(devices_by_user.get(emp.user.id)),
+                    **get_login_times(emp.user.id),
                 })
                 add_company_user(emp.user, mag.shop_name, mag.id, emp.position, device=devices_by_user.get(emp.user.id))
 
@@ -2634,6 +2668,12 @@ class DeleteUserView(APIView):
         if current_user.role not in ["admin", "magasin"]:
             return Response({"error": "Permission refusée"}, status=403)
 
+        password = request.data.get("password")
+        if not password:
+            return Response({"error": "Mot de passe requis pour confirmer la suppression."}, status=400)
+        if not current_user.check_password(password):
+            return Response({"error": "Mot de passe incorrect."}, status=400)
+
         user_admin = get_user_admin(current_user)
         if not user_admin:
             return Response({"error": "Permission refusée : entreprise introuvable."}, status=403)
@@ -2742,6 +2782,14 @@ class MagasinViewSet(viewsets.ModelViewSet):
         if self.request.user.role != "admin":
             raise serializers.ValidationError("Seul l'admin peut créer un magasin.")
         serializer.save(admin=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        password = request.data.get("password")
+        if not password:
+            return Response({"error": "Mot de passe requis pour confirmer la suppression."}, status=400)
+        if not request.user.check_password(password):
+            return Response({"error": "Mot de passe incorrect."}, status=400)
+        return super().destroy(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()

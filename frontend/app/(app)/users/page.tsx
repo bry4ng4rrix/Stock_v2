@@ -23,6 +23,7 @@ import { Check, X, ShieldAlert, Users as UsersIcon, Shield, Briefcase, Plus, Loa
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { useCurrentUser } from '@/lib/auth/useCurrentUser';
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
 
 const SUB_STATUS_LABEL: Record<string, string> = {
   active: 'Actif',
@@ -90,6 +91,30 @@ export default function UsersPage() {
   const [editingUserRole, setEditingUserRole] = useState<any>(null);
   const [newRoleValue, setNewRoleValue] = useState('');
   const [editRoleLoading, setEditRoleLoading] = useState(false);
+
+  // Delete user confirmation
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+
+  // Ticks every 10 minutes so the "Actif il y a ..." column refreshes without a page reload
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 10 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatRelativeTime = (dateStr?: string | null) => {
+    if (!dateStr) return null;
+    const diffMin = Math.max(0, Math.round((now.getTime() - new Date(dateStr).getTime()) / 60000));
+    if (diffMin < 1) return "à l'instant";
+    if (diffMin < 60) return `il y a ${diffMin} minute${diffMin > 1 ? 's' : ''}`;
+    const diffH = Math.round(diffMin / 60);
+    if (diffH < 24) return `il y a ${diffH} heure${diffH > 1 ? 's' : ''}`;
+    const diffD = Math.round(diffH / 24);
+    return `il y a ${diffD} jour${diffD > 1 ? 's' : ''}`;
+  };
+
+  const isCurrentlyOnline = (u: any) =>
+    !!u.last_login_at && (!u.last_logout_at || new Date(u.last_logout_at) < new Date(u.last_login_at));
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -237,15 +262,11 @@ export default function UsersPage() {
     }
   };
 
-  const handleDelete = async (userId: number) => {
-    if (!confirm('Supprimer définitivement cet utilisateur ?')) return;
-    try {
-      await djangoClient.users.delete(userId);
-      toast.success('Utilisateur supprimé');
-      await fetchUsers();
-    } catch (err: any) {
-      toast.error(err.message);
-    }
+  const handleConfirmDelete = async (password: string) => {
+    if (!deleteTarget) return;
+    await djangoClient.users.delete(deleteTarget.id, password);
+    toast.success('Utilisateur supprimé');
+    await fetchUsers();
   };
 
   const handleUpdateRole = async () => {
@@ -515,12 +536,14 @@ export default function UsersPage() {
                         <TableHead>Magasin</TableHead>
                         <TableHead>Poste</TableHead>
                         <TableHead>Appareil connecté</TableHead>
+                        <TableHead>Connexion / Déconnexion</TableHead>
+                        <TableHead>Actif</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredAll.length === 0 ? (
-                        <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Aucun utilisateur trouvé</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Aucun utilisateur trouvé</TableCell></TableRow>
                       ) : filteredAll.map(u => (
                         <TableRow key={u.id}>
                           <TableCell>
@@ -559,6 +582,36 @@ export default function UsersPage() {
                               <span className="text-xs text-muted-foreground">Aucun appareil</span>
                             )}
                           </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {u.last_login_at ? (
+                              <div className="space-y-0.5">
+                                <div>Connexion : {format(new Date(u.last_login_at), 'dd MMM yyyy HH:mm', { locale: fr })}</div>
+                                <div>
+                                  Déconnexion :{' '}
+                                  {isCurrentlyOnline(u)
+                                    ? 'En ligne'
+                                    : format(new Date(u.last_logout_at), 'dd MMM yyyy HH:mm', { locale: fr })}
+                                </div>
+                              </div>
+                            ) : '-'}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {u.last_login_at ? (
+                              isCurrentlyOnline(u) ? (
+                                <span className="text-green-700 flex items-center gap-1.5">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 inline-block shrink-0" />
+                                  Actif {formatRelativeTime(u.last_login_at)}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground flex items-center gap-1.5">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-slate-300 inline-block shrink-0" />
+                                  Hors ligne {formatRelativeTime(u.last_logout_at)}
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Jamais connecté</span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
                               {/* Managing an admin account (founder or co-admin) is
@@ -578,7 +631,7 @@ export default function UsersPage() {
                                 <Button
                                   variant="ghost" size="sm"
                                   className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                                  onClick={() => handleDelete(u.id)}
+                                  onClick={() => setDeleteTarget({ id: u.id, name: u.full_name || u.email })}
                                 >
                                   Supprimer
                                 </Button>
@@ -906,6 +959,20 @@ export default function UsersPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Supprimer cet utilisateur"
+        description={
+          <>
+            Vous êtes sur le point de supprimer définitivement{' '}
+            <span className="font-medium text-foreground">{deleteTarget?.name}</span>.
+            Cette action est irréversible. Entrez votre mot de passe pour confirmer.
+          </>
+        }
+        onConfirm={handleConfirmDelete}
+      />
     </div>
   );
 }

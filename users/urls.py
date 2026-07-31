@@ -17,6 +17,7 @@ from .views import (
     MovementViewSet,
     AdminMagasinOverviewView,
     UsersByMagasinView,
+    LogoutEventView,
     MagasinStatsView,
     DashboardView,
     ApiEndpointsListView,
@@ -95,6 +96,8 @@ urlpatterns = [
     path("sales/profit-by-magasins/", AdminMagasinProfitView.as_view()),
     # List of users grouped by magasin
     path("magasins/users/", UsersByMagasinView.as_view()),
+    # Best-effort logout timestamp (explicit "Déconnexion" click)
+    path("logout-event/", LogoutEventView.as_view()),
     # Store statistics by magasin
     path("magasins/stats/", MagasinStatsView.as_view()),
     # Overview détaillée des magasins pour l'admin

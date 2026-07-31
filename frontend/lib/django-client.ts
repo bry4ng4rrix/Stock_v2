@@ -214,8 +214,11 @@ class DjangoAPIClient {
     })
   }
 
-  async delete<T>(endpoint: string): Promise<T> {
-    return this.request<T>(endpoint, { method: 'DELETE' })
+  async delete<T>(endpoint: string, data?: any): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'DELETE',
+      body: data ? JSON.stringify(data) : undefined,
+    })
   }
 
   // ==================== FormData Methods (for file uploads) ====================
@@ -344,6 +347,12 @@ class DjangoAPIClient {
     },
 
     logout: async () => {
+      try {
+        await this.post('/users/logout-event/')
+      } catch (error) {
+        console.warn('[v0] Logout event recording failed:', error)
+      }
+
       const refreshToken = this.tokens?.refresh || (() => {
         if (typeof window === 'undefined') return null
         try {
@@ -474,8 +483,8 @@ class DjangoAPIClient {
       return this.put<any>(`/users/products/${id}/`, data)
     },
 
-    delete: async (id: number) => {
-      return this.delete(`/users/products/${id}/`)
+    delete: async (id: number, password: string) => {
+      return this.delete(`/users/products/${id}/`, { password })
     },
 
     search: async (query: string) => {
@@ -580,8 +589,8 @@ class DjangoAPIClient {
       return this.put<any>(`/users/role/${id}/`, data)
     },
 
-    delete: async (id: number) => {
-      return this.delete(`/users/delete/${id}/`)
+    delete: async (id: number, password: string) => {
+      return this.delete(`/users/delete/${id}/`, { password })
     },
 
     updateProfile: async (data: any) => {

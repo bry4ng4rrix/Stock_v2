@@ -185,6 +185,10 @@ class LoginEvent(models.Model):
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.CharField(max_length=500, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Set when the frontend explicitly calls the logout endpoint (best-effort:
+    # JWT sessions have no server-side invalidation, so this only reflects an
+    # actual click on "Déconnexion", not token expiry or closing the tab).
+    logged_out_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]

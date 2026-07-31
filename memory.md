@@ -6,6 +6,82 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-07-31 (suite) — Heures de connexion/déconnexion + statut "actif il y a ..." dans Super Admin
+
+**Prompt utilisateur :**
+> dans la page super admin , ajouter un table cell pour afficher l'heure de
+> connexion et deconection de l'utilisateurs , et un autre comme une mise a
+> jours a chaque 10 minute , exemple , actif il y a 10 minutes
+
+**Contexte :** aucune "heure de déconnexion" n'était trackée nulle part (JWT
+sans invalidation serveur, `logout()` purement local) — ajout nécessaire
+d'un vrai mécanisme pour que la colonne ait un sens. La page "Super Admin"
+du sidebar pointe vers `users/page.tsx` (`/superadmin` existe mais n'est
+liée dans aucun menu — non modifiée ici).
+
+**Modifications apportées :**
+- Backend (`users/models.py`) : `LoginEvent.logged_out_at` (nullable),
+  migration `0015_loginevent_logged_out_at` (non appliquée à `db.sqlite3`
+  local — sera appliquée automatiquement au déploiement via le `manage.py
+  migrate` déjà présent dans `.github/workflows/deploy.yml`).
+- Backend (`users/views.py`) : nouvelle vue `LogoutEventView`
+  (`POST /users/logout-event/`) qui marque `logged_out_at = now()` sur le
+  dernier `LoginEvent` de l'utilisateur connecté. `UsersByMagasinView`
+  expose désormais `last_login_at`/`last_logout_at` pour chaque utilisateur
+  (manager, employers, co-admins), via un cache mémoïsé par user_id pour
+  éviter le N+1.
+- Frontend (`lib/django-client.ts`) : `auth.logout()` appelle
+  `POST /users/logout-event/` en tout premier, avant de vider les tokens
+  (sinon la requête part sans authentification).
+- Frontend (`app/(app)/users/page.tsx`) : deux nouvelles colonnes dans le
+  tableau "Utilisateurs actifs" — "Connexion / Déconnexion" (dates formatées,
+  "En ligne" si pas de déconnexion postérieure à la dernière connexion) et
+  "Actif" (badge vert "Actif il y a X minutes/heures/jours" ou gris "Hors
+  ligne depuis ..."). Un `setInterval` de 10 minutes met à jour un état
+  `now` pour recalculer ces temps relatifs sans recharger la page.
+- Documenté dans `modifhistory.md` pour la portée côté Flutter (nouvel
+  endpoint + champs ajoutés à `magasins/users/`).
+- Vérification : 2 tests Django ad hoc (login expose last_login_at,
+  logout-event marque logged_out_at et il ressort bien dans la liste —
+  supprimés après validation) ; `tsc --noEmit` sans nouvelle erreur.
+
+## 2026-07-31 — Confirmation par mot de passe avant suppression (utilisateurs, produits, magasins) + modifhistory.md
+
+**Prompt utilisateur :**
+> dans super admn , sur la suppression des utilisateur ,remplacer l'alert en
+> vrai modale et ajouter un confirmation de mot de pass avant de supprimer
+>
+> ajouter aussi un protection par mot de passe pour la suppression des
+> produits , et enregistre les modifications sur le backend dans un fichier
+> modifhistory.md pour que je modifier la version mobile sur fluttter ,
+>
+> et de meme sur la suppression des magasin
+
+**Modifications apportées :**
+- Backend (`users/views.py`) : `DeleteUserView.delete`, `ProductViewSet.destroy`
+  et un nouveau `MagasinViewSet.destroy` exigent désormais `password` dans le
+  corps de la requête et vérifient `request.user.check_password(password)`
+  avant toute suppression — 400 explicite si absent ou incorrect. Aucune UI
+  de suppression de magasin n'existe côté web actuellement (vérifié) ; seul
+  le backend est protégé pour cet endpoint.
+- Frontend : nouveau composant [`confirm-delete-dialog.tsx`](frontend/components/confirm-delete-dialog.tsx)
+  (vrai modal avec champ mot de passe, remplace les `confirm()` natifs du
+  navigateur), branché sur `superadmin/page.tsx`, `users/page.tsx` (suppression
+  d'utilisateur) et `products/page.tsx` (suppression de produit — a aussi
+  corrigé un bug existant où le `catch` du delete affichait "Produit supprimé"
+  même en cas d'erreur). `lib/django-client.ts` : `delete()` accepte un corps
+  JSON ; `users.delete(id, password)` et `products.delete(id, password)`
+  l'envoient.
+- Nouveau fichier [`modifhistory.md`](modifhistory.md) (à la racine, distinct
+  de `memory.md`) : journal dédié aux changements de contrat d'API backend à
+  répercuter sur l'app mobile Flutter (`valhery_wear`), demandé explicitement
+  pour ce cas d'usage.
+- Vérification : 9 tests Django ad hoc (3 delete utilisateur + 6
+  produit/magasin, supprimés après validation) ; `tsc --noEmit` sans nouvelle
+  erreur (seule erreur restante est préexistante, sans rapport : `stores`
+  manquant sur `DjangoAPIClient` dans une méthode `getStoreByManager` non
+  touchée).
+
 ## 2026-07-30 (suite 2) — Login sans modal de confirmation + modal de transfert agrandi
 
 **Prompt utilisateur :**
