@@ -256,7 +256,9 @@ export function SubscriptionExpiredContent() {
                         <RadioGroupItem value={String(o.id)} id={`offer-${o.id}`} />
                         <div>
                           <p className="text-sm font-medium">{o.name}</p>
-                          <p className="text-xs text-muted-foreground">{o.max_devices} appareil(s) connecté(s)</p>
+                          <p className="text-xs text-muted-foreground">
+                            {o.max_devices} appareil(s) connecté(s) · {o.duration_months} mois
+                          </p>
                         </div>
                       </div>
                       <span className="text-sm font-semibold whitespace-nowrap">{o.price}</span>

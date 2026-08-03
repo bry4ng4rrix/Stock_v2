@@ -771,10 +771,10 @@ class DjangoAPIClient {
     listOffers: async () => {
       return this.get<any[]>('/users/platform-admin/offers/')
     },
-    createOffer: async (data: { name: string; price: number; max_devices: number; is_active?: boolean }) => {
+    createOffer: async (data: { name: string; price: number; max_devices: number; duration_months: number; is_active?: boolean }) => {
       return this.post<any>('/users/platform-admin/offers/', data)
     },
-    updateOffer: async (offerId: number, data: Partial<{ name: string; price: number; max_devices: number; is_active: boolean }>) => {
+    updateOffer: async (offerId: number, data: Partial<{ name: string; price: number; max_devices: number; duration_months: number; is_active: boolean }>) => {
       return this.patch<any>(`/users/platform-admin/offers/${offerId}/`, data)
     },
     deleteOffer: async (offerId: number) => {

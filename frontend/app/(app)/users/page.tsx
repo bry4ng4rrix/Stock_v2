@@ -835,6 +835,12 @@ export default function UsersPage() {
                       )}
                     </div>
 
+                    {subscription?.offer && (
+                      <div className="text-sm text-muted-foreground">
+                        Offre : {subscription.offer.name} · Durée : {subscription.offer.duration_months} mois
+                      </div>
+                    )}
+
                     {subscription?.status !== 'active' && subscription?.status !== 'demo' && (
                       <Button onClick={handleRequestActivation} disabled={requestingActivation || hasPendingActivationRequest}>
                         {hasPendingActivationRequest

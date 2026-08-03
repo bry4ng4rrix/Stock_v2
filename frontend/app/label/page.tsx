@@ -613,7 +613,7 @@ export default function LabelDashboardPage() {
                       <SelectItem value="none">Aucune offre (limite par défaut)</SelectItem>
                       {offers.map((o) => (
                         <SelectItem key={o.id} value={String(o.id)}>
-                          {o.name} — {o.max_devices} appareils
+                          {o.name} — {o.max_devices} appareils · {o.duration_months} mois
                         </SelectItem>
                       ))}
                     </SelectContent>

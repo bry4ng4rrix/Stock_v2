@@ -32,10 +32,11 @@ const emptyForm = {
   name: '',
   price: '',
   max_devices: '',
+  duration_months: '',
   is_active: true,
 };
 
-type FormErrors = Partial<Record<'name' | 'price' | 'max_devices', string>>;
+type FormErrors = Partial<Record<'name' | 'price' | 'max_devices' | 'duration_months', string>>;
 
 function validateForm(form: typeof emptyForm): FormErrors {
   const errors: FormErrors = {};
@@ -49,6 +50,10 @@ function validateForm(form: typeof emptyForm): FormErrors {
   const maxDevices = Number(form.max_devices);
   if (form.max_devices === '' || !Number.isInteger(maxDevices) || maxDevices < 1) {
     errors.max_devices = "Le nombre d'appareils doit être un entier d'au moins 1.";
+  }
+  const durationMonths = Number(form.duration_months);
+  if (form.duration_months === '' || !Number.isInteger(durationMonths) || durationMonths < 1) {
+    errors.duration_months = "La durée doit être un entier d'au moins 1 mois.";
   }
   return errors;
 }
@@ -99,6 +104,7 @@ export default function LabelOffresPage() {
       name: offer.name || '',
       price: String(offer.price ?? ''),
       max_devices: String(offer.max_devices ?? ''),
+      duration_months: String(offer.duration_months ?? ''),
       is_active: offer.is_active,
     });
     setFormErrors({});
@@ -116,6 +122,7 @@ export default function LabelOffresPage() {
         name: formData.name.trim(),
         price: Number(formData.price),
         max_devices: Number(formData.max_devices),
+        duration_months: Number(formData.duration_months),
         is_active: formData.is_active,
       };
       if (formMode === 'create') {
@@ -195,6 +202,7 @@ export default function LabelOffresPage() {
                   <TableRow>
                     <TableHead>Nom</TableHead>
                     <TableHead>Prix</TableHead>
+                    <TableHead>Durée</TableHead>
                     <TableHead>Appareils connectés</TableHead>
                     <TableHead>Sociétés</TableHead>
                     <TableHead>Statut</TableHead>
@@ -206,6 +214,7 @@ export default function LabelOffresPage() {
                     <TableRow key={o.id}>
                       <TableCell className="font-medium">{o.name}</TableCell>
                       <TableCell>{o.price}</TableCell>
+                      <TableCell>{o.duration_months} mois</TableCell>
                       <TableCell>
                         <Badge variant="outline" className="font-normal flex items-center gap-1 w-fit">
                           <Smartphone className="h-3 w-3" />
@@ -249,7 +258,7 @@ export default function LabelOffresPage() {
           <DialogHeader>
             <DialogTitle>{formMode === 'create' ? 'Nouvelle offre' : "Modifier l'offre"}</DialogTitle>
             <DialogDescription>
-              Définissez le nom, le prix et le nombre d'appareils connectés autorisés pour ce plan.
+              Définissez le nom, le prix, la durée et le nombre d'appareils connectés autorisés pour ce plan.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -285,6 +294,18 @@ export default function LabelOffresPage() {
                 placeholder="Ex: 3"
               />
               {formErrors.max_devices && <p className="text-xs text-red-600">{formErrors.max_devices}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Durée (mois)</Label>
+              <Input
+                type="number"
+                min="1"
+                step="1"
+                value={formData.duration_months}
+                onChange={(e) => setFormData((f) => ({ ...f, duration_months: e.target.value }))}
+                placeholder="Ex: 1"
+              />
+              {formErrors.duration_months && <p className="text-xs text-red-600">{formErrors.duration_months}</p>}
             </div>
             <div className="flex items-center justify-between rounded-md border p-3">
               <div>
