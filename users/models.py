@@ -109,6 +109,7 @@ class SubscriptionOffer(models.Model):
     name = models.CharField(max_length=255)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     max_devices = models.PositiveIntegerField(default=1)
+    duration_months = models.PositiveIntegerField(default=1, help_text="Durée de l'offre en mois (1, 2, 3...)")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

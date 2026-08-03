@@ -461,7 +461,7 @@ class SubscriptionOfferSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SubscriptionOffer
-        fields = ["id", "name", "price", "max_devices", "is_active", "subscriptions_count", "created_at", "updated_at"]
+        fields = ["id", "name", "price", "max_devices", "duration_months", "is_active", "subscriptions_count", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def get_subscriptions_count(self, obj):

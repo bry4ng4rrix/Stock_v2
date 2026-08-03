@@ -217,6 +217,7 @@ class SubscriptionOfferAdmin(admin.ModelAdmin):
         "name",
         "price",
         "max_devices",
+        "duration_months",
         "is_active",
     )
 

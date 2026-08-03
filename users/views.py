@@ -319,6 +319,7 @@ class MyCompanySubscriptionView(APIView):
             "trial_ends_at": sub.trial_ends_at,
             "is_currently_active": sub.is_currently_active,
             "days_left_in_trial": sub.days_left_in_trial,
+            "offer": SubscriptionOfferSerializer(sub.offer).data if sub.offer else None,
         })
 
 
