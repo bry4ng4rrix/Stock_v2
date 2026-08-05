@@ -62,6 +62,16 @@ def _check_sale_ownership(user, product):
             raise serializers.ValidationError({"detail": "Profil employé introuvable."})
 
 
+def _check_caisse_open(user, magasin):
+    """Bloque l'enregistrement d'une vente si la caisse du magasin est
+    fermée — sauf pour un admin, qui peut toujours vendre (ex. réajustement,
+    boutique sans caisse suivie). Appelé par SaleViewSet et BulkSaleView."""
+    if user.role == "admin":
+        return
+    if magasin is None or not CaisseSession.objects.filter(magasin=magasin, status="open").exists():
+        raise serializers.ValidationError({"caisse": "La caisse doit être ouverte pour enregistrer une vente."})
+
+
 def _auto_generate_qr(product):
     """Generate and save a QR code image for a product if it has none."""
     try:
@@ -1410,6 +1420,7 @@ class SaleViewSet(viewsets.ModelViewSet):
 
         # Security check: ensure the product belongs to the current user's company/store
         _check_sale_ownership(user, product)
+        _check_caisse_open(user, product.magasin)
 
         if validated.get('is_paid', True) and not validated.get('payment_date'):
             serializer.validated_data['payment_date'] = timezone.now()
@@ -1505,6 +1516,7 @@ class BulkSaleView(APIView):
 
         try:
             _check_sale_ownership(user, product)
+            _check_caisse_open(user, product.magasin)
         except serializers.ValidationError as exc:
             return Response(exc.detail, status=400)
 

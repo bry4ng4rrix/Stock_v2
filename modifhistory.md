@@ -71,6 +71,18 @@ si l'utilisateur (`magasin`/`employer`) a une session ouverte — sinon requis.
 - `400 { "session": ["Aucune session de caisse ouverte."] }` (ou message
   similaire porté par le champ non-field selon le point d'entrée)
 
+### `POST /api/users/sales/` et `POST /api/users/sales/bulk/` (contrat étendu, cassant pour magasin/employer)
+Refusent désormais la vente si la caisse du magasin du produit est fermée
+(aucune `CaisseSession` `status="open"`) — **sauf pour un admin**, qui peut
+toujours vendre. `400` :
+```json
+{ "caisse": "La caisse doit être ouverte pour enregistrer une vente." }
+```
+Impact direct sur le POS : avant d'encaisser, vérifier `GET
+/caisse/sessions/current/` (ou l'état déjà chargé) pour un compte
+magasin/employer, et inviter à ouvrir la caisse si fermée plutôt que de
+laisser échouer l'encaissement.
+
 ### `Notification` (contrat étendu, pas cassant)
 Nouveau `notif_type` : `"caisse"` (ouverture, fermeture, mouvement), et
 nouveau champ `caisse_session` (id, nullable) sur `GET
@@ -92,6 +104,11 @@ autres modèles.
   `GET /caisse/sessions/`.
 - Écouter `caisse_session`/`caisse_movement` sur `ws/data/` pour
   rafraîchir en temps réel si un autre poste ouvre/ferme/alimente la caisse.
+- Écran de vente (POS) : pour un compte magasin/employer, désactiver le
+  bouton d'encaissement (avec message explicite) quand aucune session de
+  caisse n'est ouverte pour le magasin — l'API la refuse de toute façon
+  désormais, mais mieux vaut l'empêcher côté UI que laisser échouer la
+  requête. Un admin n'est jamais bloqué.
 - Référence d'implémentation côté Flutter (une fois portée) :
   `lib/features/caisse/` dans `valhery_wear`.
 
