@@ -88,7 +88,11 @@ class RegisterSerializer(serializers.ModelSerializer):
             user.set_password(password)
             user.save()
             magasin = MagasinProfile.objects.create(user=user, admin=admin, shop_name=shop_name)
-            magasin.admins.add(admin)
+            # `admin` peut être un simple co-admin (pas le fondateur) : il faut
+            # donner accès à TOUS les admins de la société (fondateur inclus),
+            # sinon ce magasin/gérant reste invisible pour eux (cf. get_company_admin_ids).
+            from .subscriptions import get_company_admin_ids
+            magasin.admins.set(CustomUser.objects.filter(id__in=get_company_admin_ids(admin)))
             return user
         elif role == "employer":
             admin = CustomUser.objects.filter(email=admin_email, role="admin").first()

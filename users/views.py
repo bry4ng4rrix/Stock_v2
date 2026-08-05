@@ -2782,7 +2782,12 @@ class MagasinViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         if self.request.user.role != "admin":
             raise serializers.ValidationError("Seul l'admin peut créer un magasin.")
-        serializer.save(admin=self.request.user)
+        magasin = serializer.save(admin=self.request.user)
+        # Le créateur peut être un co-admin : partager l'accès avec tous les
+        # admins de la société (fondateur inclus), sinon ce magasin reste
+        # invisible pour eux. Cf. RegisterSerializer.create (role="magasin").
+        from .subscriptions import get_company_admin_ids
+        magasin.admins.set(CustomUser.objects.filter(id__in=get_company_admin_ids(self.request.user)))
 
     def destroy(self, request, *args, **kwargs):
         password = request.data.get("password")
