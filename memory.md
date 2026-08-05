@@ -6,6 +6,36 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-08-05 (suite 2) — Le pipeline de déploiement tournait silencieusement sur du vieux code
+
+**Prompt utilisateur :**
+> verifier car il y a une erreur 404 sur le backend du caisse
+
+**Diagnostic :** le endpoint caisse existait bien dans le code (poussé sur
+GitHub) mais renvoyait 404 en vrai sur le VPS (`157.173.103.147:8000`,
+vérifié par requêtes directes) — donc pas un bug caisse, le serveur tournait
+encore l'ancien code. `.github/workflows/deploy.yml` affichait pourtant
+"Success" pour ce déploiement (vérifié via la page Actions de GitHub).
+Cause : le script SSH de déploiement fait `git pull origin main` sans
+`set -e` ; comme `db.sqlite3`/`media/` changent en permanence sur le VPS
+(trafic live), ce `git pull` échoue presque à chaque déploiement dès qu'un
+commit entrant touche l'un de ces fichiers ("modifications locales
+écrasées") — mais le script continuait quand même vers `docker compose
+build/up` avec l'ancien code, et l'étape finale réussissait toujours,
+masquant l'échec réel. Diagnostic fait via l'app Flutter séparée
+(`/run/media/garrix/Outils/flutter windows/valheri_wear`), qui consomme la
+même API et a révélé le problème en premier.
+
+**Modifications apportées :**
+- `.github/workflows/deploy.yml` : `set -e` ajouté, et l'étape de mise à
+  jour du code remplacée par `git fetch` + `git reset --hard origin/main`
+  (déterministe, ne peut plus échouer sur un conflit) entourée d'une
+  sauvegarde/restauration de `db.sqlite3` et `media/` — le code correspond
+  toujours exactement à GitHub, les données live du VPS ne sont plus jamais
+  en jeu dans le pull.
+- Pas de changement côté `modifhistory.md` (infra de déploiement, sans
+  impact sur le contrat d'API consommé par Flutter).
+
 ## 2026-07-31 (suite) — Heures de connexion/déconnexion + statut "actif il y a ..." dans Super Admin
 
 **Prompt utilisateur :**
