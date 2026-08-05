@@ -15,6 +15,8 @@ from .views import (
     TicketViewSet,
     BulkSaleView,
     MovementViewSet,
+    CaisseSessionViewSet,
+    CaisseMovementViewSet,
     AdminMagasinOverviewView,
     UsersByMagasinView,
     LogoutEventView,
@@ -68,6 +70,8 @@ router.register(r"products", ProductViewSet, basename="products")
 router.register(r"sales", SaleViewSet, basename="sales")
 router.register(r"tickets", TicketViewSet, basename="tickets")
 router.register(r"movements", MovementViewSet, basename="movements")
+router.register(r"caisse/sessions", CaisseSessionViewSet, basename="caisse-sessions")
+router.register(r"caisse/movements", CaisseMovementViewSet, basename="caisse-movements")
 router.register(r"notifications", NotificationViewSet, basename="notifications")
 router.register(r"magasins", MagasinViewSet, basename="magasins")
 

@@ -524,6 +524,7 @@ class Notification(models.Model):
         ("chat", "Chat"),
         ("transfer", "Transfer"),
         ("movement", "Movement"),
+        ("caisse", "Caisse"),
         ("other", "Other"),
     )
 
@@ -534,6 +535,7 @@ class Notification(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
     movement = models.ForeignKey('Movement', on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
+    caisse_session = models.ForeignKey('CaisseSession', on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
     user = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="notifications")
 
     is_read = models.BooleanField(default=False)
@@ -583,6 +585,66 @@ class Movement(models.Model):
         who = self.changed_by.full_name if self.changed_by else 'Unknown'
         product_name = self.product_name or (self.product.name if self.product else 'Produit inconnu')
         return f"Movement {product_name}: {self.change} by {who} at {self.created_at}"
+
+
+class CaisseSession(models.Model):
+    """Session de caisse pour un magasin : ouverte avec un fond de départ,
+    fermée avec un montant compté. Un magasin ne peut avoir qu'une session
+    `open` à la fois (contrainte applicative, voir CaisseSessionViewSet.open)."""
+
+    STATUS_CHOICES = (
+        ("open", "Ouverte"),
+        ("closed", "Fermée"),
+    )
+
+    magasin = models.ForeignKey(MagasinProfile, on_delete=models.CASCADE, related_name="caisse_sessions")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="open")
+    opened_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="caisse_sessions_opened")
+    closed_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="caisse_sessions_closed")
+    opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    closing_balance = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    # Calculés à la fermeture : opening_balance + mouvements entrée - mouvements sortie,
+    # puis écart avec le montant réellement compté (closing_balance).
+    expected_balance = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    difference = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    opening_note = models.CharField(max_length=255, blank=True, null=True)
+    closing_note = models.CharField(max_length=255, blank=True, null=True)
+    opened_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Session de caisse"
+        verbose_name_plural = "Sessions de caisse"
+        ordering = ["-opened_at"]
+
+    def __str__(self):
+        return f"Caisse {self.magasin.shop_name} - {self.opened_at:%d/%m/%Y %H:%M}"
+
+
+class CaisseMovement(models.Model):
+    """Mouvement d'espèces (apport, retrait, dépense...) au sein d'une
+    session de caisse — distinct de `Movement` qui suit le stock produit."""
+
+    MOVEMENT_TYPES = (
+        ("in", "Entrée"),
+        ("out", "Sortie"),
+    )
+
+    session = models.ForeignKey(CaisseSession, on_delete=models.CASCADE, related_name="movements")
+    magasin = models.ForeignKey(MagasinProfile, on_delete=models.SET_NULL, null=True, blank=True, related_name="caisse_movements")
+    movement_type = models.CharField(max_length=10, choices=MOVEMENT_TYPES)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=255)
+    created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="caisse_movements")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Mouvement de caisse"
+        verbose_name_plural = "Mouvements de caisse"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.get_movement_type_display()} {self.amount} - session #{self.session_id}"
 
 
 class ChatMessage(models.Model):

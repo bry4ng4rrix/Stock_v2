@@ -15,6 +15,8 @@ from .models import (
     Sale,
     Ticket,
     Movement,
+    CaisseSession,
+    CaisseMovement,
     ChatMessage,
     Subscription,
     SubscriptionOffer,
@@ -315,6 +317,68 @@ class MovementSerializer(serializers.ModelSerializer):
         return obj.movement_type
 
 
+class CaisseMovementSerializer(serializers.ModelSerializer):
+    magasin_name = serializers.CharField(source="magasin.shop_name", read_only=True)
+    created_by_name = serializers.CharField(source="created_by.full_name", read_only=True)
+
+    class Meta:
+        model = CaisseMovement
+        fields = [
+            "id",
+            "session",
+            "magasin",
+            "magasin_name",
+            "movement_type",
+            "amount",
+            "reason",
+            "created_by",
+            "created_by_name",
+            "created_at",
+        ]
+        read_only_fields = ["id", "session", "magasin", "created_by", "created_at"]
+
+
+class CaisseSessionSerializer(serializers.ModelSerializer):
+    magasin_name = serializers.CharField(source="magasin.shop_name", read_only=True)
+    opened_by_name = serializers.CharField(source="opened_by.full_name", read_only=True)
+    closed_by_name = serializers.CharField(source="closed_by.full_name", read_only=True)
+    movements = CaisseMovementSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CaisseSession
+        fields = [
+            "id",
+            "magasin",
+            "magasin_name",
+            "status",
+            "opened_by",
+            "opened_by_name",
+            "closed_by",
+            "closed_by_name",
+            "opening_balance",
+            "closing_balance",
+            "expected_balance",
+            "difference",
+            "opening_note",
+            "closing_note",
+            "opened_at",
+            "closed_at",
+            "movements",
+        ]
+        read_only_fields = [
+            "id",
+            "magasin",
+            "status",
+            "opened_by",
+            "closed_by",
+            "expected_balance",
+            "difference",
+            "opened_at",
+            "closed_at",
+            "movements",
+        ]
+
+
 class NotificationSerializer(serializers.ModelSerializer):
     magasin_name = serializers.CharField(source="magasin.shop_name", read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
@@ -323,7 +387,7 @@ class NotificationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Notification
-        fields = ["id", "notif_type", "message", "magasin", "magasin_name", "product", "product_name", "sale", "sale_id", "movement", "user", "user_name", "is_read", "created_at"]
+        fields = ["id", "notif_type", "message", "magasin", "magasin_name", "product", "product_name", "sale", "sale_id", "movement", "caisse_session", "user", "user_name", "is_read", "created_at"]
         read_only_fields = ["id", "created_at"]
 
 

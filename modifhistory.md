@@ -9,6 +9,92 @@ changement d'API, la plus récente en haut.
 
 ---
 
+## 2026-08-05 — Gestion de caisse (ouverture/fermeture + mouvements d'espèces)
+
+Nouveaux modèles `CaisseSession` et `CaisseMovement` (migration
+`0017_alter_notification_notif_type_caissesession_and_more`) et nouveaux
+endpoints. Distinct de `Movement` (qui suit le stock produit) — ceci suit
+l'argent en caisse : fond d'ouverture, apports/retraits pendant la session,
+montant compté à la fermeture, écart calculé automatiquement.
+
+Un magasin ne peut avoir qu'**une session ouverte à la fois** (contrainte
+applicative, `400` sinon). Scoping identique aux autres ressources
+(`Product`, `Sale`, `Movement`) : un admin voit toutes les sessions/mouvements
+des magasins de sa société, un compte `magasin` ou `employer` uniquement
+ceux de son propre magasin.
+
+### `GET /api/users/caisse/sessions/`
+Historique des sessions de caisse (plus récente en premier), avec
+`movements` imbriqués. Filtres query : `magasin_id` (ou `store_id`),
+`status` (`open`/`closed`).
+
+### `GET /api/users/caisse/sessions/current/`
+Session actuellement ouverte pour le magasin de l'utilisateur (`magasin_id`
+en query pour un admin, obligatoire pour lui puisqu'il n'a pas de magasin
+propre). **`204 No Content`** si aucune session ouverte — ne pas s'attendre
+à un body `null` (DRF ne sérialise pas `Response(None)` en JSON `null`, le
+body est vide dans ce cas).
+
+### `POST /api/users/caisse/sessions/open/`
+Ouvre une nouvelle session pour le magasin de l'utilisateur connecté
+(`magasin`/`magasin_id` dans le body, obligatoire pour un admin, ignoré
+pour `magasin`/`employer` qui ont un magasin implicite).
+```json
+{ "opening_balance": "10000", "opening_note": "Fond de caisse du matin" }
+```
+- `400 { "error": "Une session de caisse est déjà ouverte pour ce magasin." }`
+- `400 { "error": "Magasin introuvable ou non spécifié." }`
+
+### `POST /api/users/caisse/sessions/<id>/close/`
+Ferme une session ouverte. Calcule `expected_balance` (fond d'ouverture +
+Σ mouvements entrée − Σ mouvements sortie) et `difference` (`closing_balance
+− expected_balance`, positif = excédent, négatif = manque).
+```json
+{ "closing_balance": "13500", "closing_note": "Compte OK" }
+```
+- `400 { "error": "Cette session est déjà fermée." }`
+- `400 { "error": "Montant de fermeture requis." }`
+
+### `GET /api/users/caisse/movements/`
+Mouvements d'espèces (entrée/sortie) — hors ouverture/fermeture elles-mêmes.
+Filtres query : `session_id`, `magasin_id`.
+
+### `POST /api/users/caisse/movements/`
+Ajoute un mouvement à la session ouverte du magasin de l'utilisateur
+(ou à `session` si fourni explicitement — doit appartenir à un magasin
+accessible à l'utilisateur, sinon rejeté).
+```json
+{ "movement_type": "in", "amount": "5000", "reason": "Apport" }
+```
+`movement_type` : `in` (entrée) ou `out` (sortie). `session` peut être omis
+si l'utilisateur (`magasin`/`employer`) a une session ouverte — sinon requis.
+- `400 { "session": ["Aucune session de caisse ouverte."] }` (ou message
+  similaire porté par le champ non-field selon le point d'entrée)
+
+### `Notification` (contrat étendu, pas cassant)
+Nouveau `notif_type` : `"caisse"` (ouverture, fermeture, mouvement), et
+nouveau champ `caisse_session` (id, nullable) sur `GET
+/api/users/notifications/`.
+
+### WebSocket `ws/data/` (contrat étendu)
+Nouveaux `model` possibles dans le payload : `"caisse_session"` et
+`"caisse_movement"` (mêmes `action` que les autres : `created`/`updated`/
+`deleted`), groupes `data_admin_<id>`/`data_magasin_<id>` identiques aux
+autres modèles.
+
+### Côté Next.js à faire
+- Nouvel écran "Caisse" (visible admin, et magasin/employer pour l'usage
+  quotidien) : bouton ouverture (montant + note) si aucune session ouverte
+  (`GET current` → `204`), sinon état "session ouverte" avec solde en cours,
+  formulaire d'ajout de mouvement (entrée/sortie + motif), et bouton
+  fermeture (montant compté + note) affichant l'écart calculé par l'API.
+  Historique des sessions passées avec leur détail (mouvements, écart) sur
+  `GET /caisse/sessions/`.
+- Écouter `caisse_session`/`caisse_movement` sur `ws/data/` pour
+  rafraîchir en temps réel si un autre poste ouvre/ferme/alimente la caisse.
+- Référence d'implémentation côté Flutter (une fois portée) :
+  `lib/features/caisse/` dans `valhery_wear`.
+
 ## 2026-07-31 (suite) — Heures de connexion/déconnexion + statut "actif il y a ..."
 
 Nouveau champ sur `LoginEvent` (`logged_out_at`, migration

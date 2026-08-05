@@ -26,8 +26,8 @@ from django.core.management import call_command
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
-from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, Ticket, EmployerProfile, AdminProfile, Movement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest, Device, SubscriptionOffer, EmployeePasswordResetRequest
-from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, TicketSerializer, MovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer, DeviceSerializer, SubscriptionOfferSerializer, EmployeePasswordResetRequestSerializer
+from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, Ticket, EmployerProfile, AdminProfile, Movement, CaisseSession, CaisseMovement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest, Device, SubscriptionOffer, EmployeePasswordResetRequest
+from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, TicketSerializer, MovementSerializer, CaisseSessionSerializer, CaisseMovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer, DeviceSerializer, SubscriptionOfferSerializer, EmployeePasswordResetRequestSerializer
 from .permissions import IsAdmin, IsPlatformOwner, IsCompanyOwner
 from .subscriptions import get_company_magasins, get_company_user_ids, get_company_devices, get_subscription_owner, get_subscription, get_device_limit_info, parse_device_name
 from rest_framework_simplejwt.views import TokenViewBase
@@ -1639,6 +1639,168 @@ class MovementViewSet(viewsets.ReadOnlyModelViewSet):
             except EmployerProfile.DoesNotExist:
                 pass
         return Movement.objects.none()
+
+
+def _accessible_magasins(user):
+    """MagasinProfile queryset visible to `user` given their role — même
+    règle de scoping que Product/Sale/MovementViewSet, factorisée ici car
+    réutilisée par les deux viewsets caisse ci-dessous."""
+    if user.role == "admin":
+        return MagasinProfile.objects.filter(Q(admin=user) | Q(admins=user)).distinct()
+    if user.role == "magasin":
+        return MagasinProfile.objects.filter(user=user)
+    if user.role == "employer":
+        return MagasinProfile.objects.filter(employers__user=user)
+    return MagasinProfile.objects.none()
+
+
+def _resolve_own_magasin(request):
+    """Magasin sur lequel `request.user` peut ouvrir/alimenter une caisse :
+    le sien pour magasin/employer, celui désigné par `magasin_id`/`magasin`
+    (et possédé par sa société) pour un admin — qui n'a pas de magasin propre."""
+    user = request.user
+    if user.role == "magasin":
+        return MagasinProfile.objects.filter(user=user).first()
+    if user.role == "employer":
+        try:
+            return user.employer_profile.magasin
+        except EmployerProfile.DoesNotExist:
+            return None
+    if user.role == "admin":
+        magasin_id = request.data.get("magasin_id") or request.data.get("magasin") or request.query_params.get("magasin_id")
+        if not magasin_id:
+            return None
+        return _accessible_magasins(user).filter(id=magasin_id).first()
+    return None
+
+
+class CaisseSessionViewSet(viewsets.ModelViewSet):
+    """Sessions de caisse (ouverture/fermeture) — pas de `create`/`update`
+    génériques : on passe par les actions `open`/`close` ci-dessous pour
+    garder les calculs (solde attendu, écart) et la règle "une session
+    ouverte à la fois par magasin" au même endroit."""
+
+    serializer_class = CaisseSessionSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
+
+    def get_queryset(self):
+        qs = CaisseSession.objects.select_related("magasin", "opened_by", "closed_by").prefetch_related("movements")
+        qs = qs.filter(magasin__in=_accessible_magasins(self.request.user))
+
+        magasin_id = self.request.query_params.get("magasin_id") or self.request.query_params.get("store_id")
+        if magasin_id:
+            qs = qs.filter(magasin_id=magasin_id)
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            qs = qs.filter(status=status_param)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        return Response({"error": "Utiliser POST /caisse/sessions/open/ pour ouvrir une session."}, status=405)
+
+    @action(detail=False, methods=["get"])
+    def current(self, request):
+        """Session actuellement ouverte pour le magasin résolu (ou
+        `magasin_id` en query pour un admin) — `204 No Content` si aucune
+        (DRF ne sérialise pas `None` en `null` JSON, voir Response(None))."""
+        qs = self.get_queryset().filter(status="open")
+        magasin_id = request.query_params.get("magasin_id")
+        if magasin_id:
+            qs = qs.filter(magasin_id=magasin_id)
+        elif request.user.role != "admin":
+            magasin = _resolve_own_magasin(request)
+            qs = qs.filter(magasin=magasin) if magasin else CaisseSession.objects.none()
+        session = qs.order_by("-opened_at").first()
+        if session is None:
+            return Response(status=204)
+        return Response(self.get_serializer(session).data)
+
+    @action(detail=False, methods=["post"])
+    def open(self, request):
+        magasin = _resolve_own_magasin(request)
+        if magasin is None:
+            return Response({"error": "Magasin introuvable ou non spécifié."}, status=400)
+        if CaisseSession.objects.filter(magasin=magasin, status="open").exists():
+            return Response({"error": "Une session de caisse est déjà ouverte pour ce magasin."}, status=400)
+        try:
+            opening_balance = Decimal(str(request.data.get("opening_balance", 0)))
+        except InvalidOperation:
+            return Response({"error": "Montant d'ouverture invalide."}, status=400)
+
+        session = CaisseSession.objects.create(
+            magasin=magasin,
+            opened_by=request.user,
+            opening_balance=opening_balance,
+            opening_note=request.data.get("opening_note") or None,
+        )
+        return Response(self.get_serializer(session).data, status=201)
+
+    @action(detail=True, methods=["post"])
+    def close(self, request, pk=None):
+        session = self.get_object()
+        if session.status == "closed":
+            return Response({"error": "Cette session est déjà fermée."}, status=400)
+        if request.data.get("closing_balance") is None:
+            return Response({"error": "Montant de fermeture requis."}, status=400)
+        try:
+            closing_balance = Decimal(str(request.data.get("closing_balance")))
+        except InvalidOperation:
+            return Response({"error": "Montant de fermeture invalide."}, status=400)
+
+        totals = session.movements.aggregate(
+            total_in=Sum("amount", filter=Q(movement_type="in")),
+            total_out=Sum("amount", filter=Q(movement_type="out")),
+        )
+        expected = session.opening_balance + (totals["total_in"] or 0) - (totals["total_out"] or 0)
+
+        session.status = "closed"
+        session.closed_by = request.user
+        session.closed_at = timezone.now()
+        session.closing_balance = closing_balance
+        session.expected_balance = expected
+        session.difference = closing_balance - expected
+        session.closing_note = request.data.get("closing_note") or None
+        session.save()
+        return Response(self.get_serializer(session).data)
+
+
+class CaisseMovementViewSet(viewsets.ModelViewSet):
+    serializer_class = CaisseMovementSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_queryset(self):
+        qs = CaisseMovement.objects.select_related("magasin", "created_by", "session")
+        qs = qs.filter(magasin__in=_accessible_magasins(self.request.user))
+
+        session_id = self.request.query_params.get("session_id") or self.request.query_params.get("session")
+        if session_id:
+            qs = qs.filter(session_id=session_id)
+        magasin_id = self.request.query_params.get("magasin_id") or self.request.query_params.get("store_id")
+        if magasin_id:
+            qs = qs.filter(magasin_id=magasin_id)
+        return qs
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        session_id = self.request.data.get("session")
+        if session_id:
+            session = CaisseSession.objects.filter(
+                id=session_id, magasin__in=_accessible_magasins(user)
+            ).first()
+        else:
+            magasin = _resolve_own_magasin(self.request)
+            session = (
+                CaisseSession.objects.filter(magasin=magasin, status="open").order_by("-opened_at").first()
+                if magasin
+                else None
+            )
+        if session is None:
+            raise serializers.ValidationError("Aucune session de caisse ouverte.")
+        if session.status != "open":
+            raise serializers.ValidationError("Cette session de caisse est fermée.")
+        serializer.save(session=session, magasin=session.magasin, created_by=user)
 
 
 # =========================
