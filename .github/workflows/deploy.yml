@@ -23,10 +23,29 @@ jobs:
       - name: Deploy on server
         run: |
           ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
+            set -e
             cd /home/garrix/Stock_v2
 
-            echo "Updating repository..."
-            git pull origin main
+            echo "Backing up live database and uploads..."
+            cp db.sqlite3 /tmp/stock_v2_db.sqlite3.bak
+            rm -rf /tmp/stock_v2_media.bak
+            cp -r media /tmp/stock_v2_media.bak
+
+            # db.sqlite3 and media/ change constantly from live traffic, so a
+            # plain `git pull` here fails almost every time a commit touches
+            # either (dirty working tree) — silently, since this script had
+            # no `set -e` before, leaving the OLD code running while the
+            # Action still reported success. Make the code update
+            # deterministic and immune to that: always match origin/main
+            # exactly, then restore the live data on top.
+            echo "Updating repository (code only, from origin/main)..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "Restoring live database and uploads..."
+            cp /tmp/stock_v2_db.sqlite3.bak db.sqlite3
+            rm -rf media
+            cp -r /tmp/stock_v2_media.bak media
 
             echo "Building images..."
             docker compose build
