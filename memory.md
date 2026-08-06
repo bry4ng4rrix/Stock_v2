@@ -6,6 +6,30 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-08-06 (suite 2) — Fond de caisse pré-rempli avec la dernière fermeture
+
+**Prompt utilisateur :**
+> sur l'ouverture de caisse , le fond de caisse au depart sera le dernier
+> caisse dans la base de donne , tous les totale des prix de produits mais
+> pas a entre
+
+**Interprétation retenue** (message ambigu) : le fond d'ouverture doit être
+pré-rempli automatiquement avec le montant compté (`closing_balance`) à la
+dernière session fermée du magasin — pas besoin de le retaper — plutôt que
+de partir de 0 ou de le calculer à partir des prix des produits. Aucun
+changement d'API nécessaire (calculé côté client à partir de l'historique
+déjà chargé).
+
+**Modifications apportées :**
+- Next.js ([`app/(app)/caisse/page.tsx`](frontend/app/(app)/caisse/page.tsx)) :
+  `openOpenDialog()` pré-remplit `openingBalance` avec `history[0]?.closing_balance`
+  (déjà trié plus récent d'abord par le backend) ; indice affiché sous le champ.
+- Flutter (`valhery_wear`) : `CaisseState.lastClosingBalanceFor(magasinId)`,
+  passé en `initialBalance` à `OpenCaisseDialog` depuis `caisse_screen.dart`.
+- Vérifié de bout en bout au navigateur headless : magasin avec une session
+  fermée à 17 500 Ar → dialogue d'ouverture pré-rempli à 17500, indice
+  visible, aucune erreur console. `flutter analyze` propre côté Flutter.
+
 ## 2026-08-06 (suite) — Heures de caisse personnalisables reportées côté Flutter
 
 **Prompt utilisateur :**
