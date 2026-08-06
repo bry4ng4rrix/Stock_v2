@@ -6,6 +6,54 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-08-06 — Page Caisse (Next.js) + heures d'ouverture/fermeture personnalisables + CI
+
+**Prompt utilisateur :**
+> ajouter dans le sidebard aussi la caisse avec les personalisations des
+> heur d'ouverture et fermeture , modifier le frontend et aussi l'autre
+> frontend dans /run/media/garrix/Outils/flutter windows/valheri_wear
+> (puis) ajouter aussi dans ce frontend next js
+> (puis, après clarification) le fix du pipeline de déploiement
+
+**Contexte :** la fonctionnalité caisse (backend) et son équivalent Flutter
+existaient déjà depuis la session du 05/08 (vérifié : `caisse_repository.dart`,
+`caisse_screen.dart`, etc. déjà présents et branchés) — seul le frontend
+Next.js n'avait aucune UI caisse. La demande de "personnalisation des heures
+d'ouverture et fermeture" était une vraie fonctionnalité manquante des deux
+côtés (`opened_at` était `auto_now_add`, `closed_at` toujours `now()`).
+
+**Modifications apportées :**
+- Backend (`users/models.py`, migration `0018`) : `CaisseSession.opened_at`
+  n'est plus `auto_now_add` — permet de backdater l'ouverture. Backend
+  (`users/views.py`) : `open()`/`close()` acceptent `opened_at`/`closed_at`
+  optionnels (ISO 8601), validés (pas dans le futur, fermeture pas avant
+  ouverture).
+- Frontend : nouvelle page [`app/(app)/caisse/page.tsx`](frontend/app/(app)/caisse/page.tsx)
+  (sélecteur de magasin pour un admin, dialogues ouverture/mouvement/fermeture
+  avec champ heure personnalisable, aperçu solde attendu/écart en direct,
+  historique des sessions), entrée "Caisse" dans le sidebar (visible
+  admin/gérant/employé, comme "Produits"/"Ventes"). Nouveau namespace
+  `djangoClient.caisse` ; `DataModel` gagne `caisse_session`/`caisse_movement`
+  pour le rafraîchissement temps réel déjà câblé côté backend.
+- **Bloqué** : le disque externe portant le projet Flutter
+  (`/run/media/garrix/Outils/flutter windows/valheri_wear`) s'est démonté en
+  cours de session — la personnalisation des heures n'a donc pas pu être
+  reportée côté Flutter. Documenté dans `modifhistory.md` pour reprise dès
+  que le disque est reconnecté.
+- Vérification : 4 tests Django ad hoc (heure personnalisée, rejet futur,
+  rejet fermeture avant ouverture — supprimés après validation) + test de
+  bout en bout au navigateur headless (Puppeteer, `google-chrome-stable`
+  système, `chromium-cli` non disponible dans cet environnement) : connexion,
+  sélection magasin, ouverture avec heure antidatée, ajout d'un mouvement,
+  fermeture avec écart à 0, historique correct, aucune erreur console.
+  Données de test nettoyées après coup, `db.sqlite3` restauré à l'état
+  du dernier commit (`git checkout --`) pour ne pas polluer le prochain sync
+  avec le VPS.
+- (Sous-tâche liée, avant la partie caisse) `.github/workflows/deploy.yml` :
+  job `verify` (Django check + `npm install && npm run build`, exactement
+  ce que fait `docker-compose.yml`) dont dépend désormais `deploy` — un
+  build cassé bloque le déploiement au lieu d'atteindre le serveur.
+
 ## 2026-08-05 (suite 2) — Le pipeline de déploiement tournait silencieusement sur du vieux code
 
 **Prompt utilisateur :**

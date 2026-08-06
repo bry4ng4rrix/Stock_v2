@@ -9,6 +9,30 @@ changement d'API, la plus récente en haut.
 
 ---
 
+## 2026-08-06 — Heures d'ouverture/fermeture de caisse personnalisables
+
+Migration `0018_alter_caissesession_opened_at` : `CaisseSession.opened_at`
+n'est plus `auto_now_add` (défaut `timezone.now`, mais overridable).
+
+### `POST /api/users/caisse/sessions/open/` (contrat étendu, pas cassant)
+Nouveau champ optionnel `opened_at` (ISO 8601). Absent → comportement
+inchangé (`now()`). Présent → utilisé tel quel, avec validation :
+- `400 { "error": "Heure d'ouverture invalide (format attendu : ISO 8601)." }`
+- `400 { "error": "Heure d'ouverture ne peut pas être dans le futur." }`
+
+### `POST /api/users/caisse/sessions/<id>/close/` (contrat étendu, pas cassant)
+Même principe avec `closed_at` (optionnel, ISO 8601) :
+- Mêmes erreurs de format/futur que ci-dessus (avec "Heure de fermeture").
+- `400 { "error": "L'heure de fermeture ne peut pas être avant l'heure d'ouverture." }`
+
+### À faire côté Flutter
+- Dans `open_caisse_dialog.dart`/`close_caisse_dialog.dart` : ajouter un
+  champ date/heure optionnel (pré-rempli avec l'heure actuelle, modifiable)
+  et l'envoyer en `opened_at`/`closed_at` (ISO 8601, `DateTime.toIso8601String()`)
+  seulement s'il diffère de "maintenant" — sinon omettre le champ.
+  Référence d'implémentation côté web : [`app/(app)/caisse/page.tsx`](frontend/app/(app)/caisse/page.tsx)
+  (`toDatetimeLocalValue`/`fromDatetimeLocalValue`).
+
 ## 2026-08-05 — Gestion de caisse (ouverture/fermeture + mouvements d'espèces)
 
 Nouveaux modèles `CaisseSession` et `CaisseMovement` (migration
