@@ -122,23 +122,34 @@ export default function CaissePage() {
   );
   const expectedBalance = session ? Number(session.opening_balance) + movementTotals.in - movementTotals.out : 0;
 
-  const openOpenDialog = () => {
-    // Pré-remplit avec le montant compté à la dernière fermeture (history
-    // est trié du plus récent au plus ancien par le backend) — le fond de
-    // départ d'aujourd'hui est en général ce qui restait hier, pas besoin
-    // de le retaper à chaque fois. Reste modifiable.
-    const lastClosingBalance = history[0]?.closing_balance;
-    setOpeningBalance(lastClosingBalance != null ? String(lastClosingBalance) : '');
+  // Pré-remplit le montant (ouverture comme fermeture) avec la valeur de
+  // stock actuelle du magasin — recalculée à chaque fois pour rester à jour
+  // (le stock bouge avec les ventes pendant la session). Reste modifiable.
+  const fetchStockValue = async (): Promise<number | null> => {
+    if (!magasinId) return null;
+    try {
+      const stats = await djangoClient.get<any[]>('/users/magasins/stats/');
+      const entry = stats.find((s: any) => s.magasin_id === magasinId);
+      return entry?.total_stock_value != null ? Number(entry.total_stock_value) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const openOpenDialog = async () => {
     setOpeningNote('');
     setOpenedAt(toDatetimeLocalValue(new Date()));
     setOpenDialogOpen(true);
+    const stockValue = await fetchStockValue();
+    setOpeningBalance(stockValue != null ? String(stockValue) : '');
   };
 
-  const openCloseDialog = () => {
-    setClosingBalance('');
+  const openCloseDialog = async () => {
     setClosingNote('');
     setClosedAt(toDatetimeLocalValue(new Date()));
     setCloseDialogOpen(true);
+    const stockValue = await fetchStockValue();
+    setClosingBalance(stockValue != null ? String(stockValue) : '');
   };
 
   const openMovementDialog = () => {
@@ -417,11 +428,9 @@ export default function CaissePage() {
             <div className="space-y-2">
               <Label>Montant d'ouverture (Ar) *</Label>
               <Input type="number" min={0} step="0.01" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} required />
-              {history[0]?.closing_balance != null && (
-                <p className="text-xs text-muted-foreground">
-                  Pré-rempli avec le montant compté à la dernière fermeture ({money(history[0].closing_balance)}) — modifiable.
-                </p>
-              )}
+              <p className="text-xs text-muted-foreground">
+                Pré-rempli avec la valeur de stock actuelle du magasin — modifiable.
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Heure d'ouverture</Label>
@@ -456,6 +465,9 @@ export default function CaissePage() {
             <div className="space-y-2">
               <Label>Montant compté (Ar) *</Label>
               <Input type="number" min={0} step="0.01" value={closingBalance} onChange={(e) => setClosingBalance(e.target.value)} required />
+              <p className="text-xs text-muted-foreground">
+                Pré-rempli avec la valeur de stock actuelle du magasin — modifiable.
+              </p>
               {closingBalance !== '' && (
                 <p className={`text-xs ${Number(closingBalance) - expectedBalance === 0 ? 'text-green-600' : 'text-orange-600'}`}>
                   Écart : {Number(closingBalance) - expectedBalance > 0 ? '+' : ''}{money(Number(closingBalance) - expectedBalance)}
