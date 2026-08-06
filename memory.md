@@ -6,6 +6,28 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-08-06 (suite) — Heures de caisse personnalisables reportées côté Flutter
+
+**Prompt utilisateur :**
+> continuer , j'ai monte le disque
+
+**Modifications apportées (dans `valhery_wear`, disque reconnecté) :**
+- `lib/data/repositories/caisse_repository.dart` : `open()`/`close()`
+  acceptent un `DateTime? openedAt`/`closedAt` optionnel, envoyé en ISO 8601.
+- `lib/state/caisse_provider.dart` : `CaisseNotifier.open()`/`close()`
+  transmettent le paramètre au repository.
+- `lib/features/caisse/widgets/open_caisse_dialog.dart` et
+  `close_caisse_dialog.dart` : champ date/heure (`showDatePicker` +
+  `showTimePicker`, pré-rempli à "maintenant", modifiable via une
+  `InputDecorator` cliquable) ; garde-fou côté client en plus de la
+  validation serveur (fermeture refusée si antérieure à l'ouverture).
+- Vérifié avec `flutter analyze` (aucune nouvelle erreur — impossible de
+  builder/lancer l'app Windows depuis cet environnement Linux, donc pas de
+  test d'interface réel côté Flutter cette fois, contrairement au test
+  navigateur complet fait côté Next.js).
+- `modifhistory.md` mis à jour : la section "À faire côté Flutter" de
+  l'entrée du 06/08 est marquée faite.
+
 ## 2026-08-06 — Page Caisse (Next.js) + heures d'ouverture/fermeture personnalisables + CI
 
 **Prompt utilisateur :**

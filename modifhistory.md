@@ -25,13 +25,14 @@ Même principe avec `closed_at` (optionnel, ISO 8601) :
 - Mêmes erreurs de format/futur que ci-dessus (avec "Heure de fermeture").
 - `400 { "error": "L'heure de fermeture ne peut pas être avant l'heure d'ouverture." }`
 
-### À faire côté Flutter
-- Dans `open_caisse_dialog.dart`/`close_caisse_dialog.dart` : ajouter un
-  champ date/heure optionnel (pré-rempli avec l'heure actuelle, modifiable)
-  et l'envoyer en `opened_at`/`closed_at` (ISO 8601, `DateTime.toIso8601String()`)
-  seulement s'il diffère de "maintenant" — sinon omettre le champ.
-  Référence d'implémentation côté web : [`app/(app)/caisse/page.tsx`](frontend/app/(app)/caisse/page.tsx)
-  (`toDatetimeLocalValue`/`fromDatetimeLocalValue`).
+### Côté Flutter — ✅ fait (2026-08-06, `valhery_wear`)
+`open_caisse_dialog.dart`/`close_caisse_dialog.dart` ont un champ date/heure
+(`showDatePicker`+`showTimePicker`, pré-rempli à "maintenant", modifiable) ;
+`caisse_repository.dart`/`caisse_provider.dart` envoient toujours
+`opened_at`/`closed_at` (ISO 8601 via `DateTime.toIso8601String()` — envoyer
+la valeur même égale à "maintenant" est sans effet, le backend l'accepte).
+Garde-fou client en plus de la validation serveur : fermeture refusée si
+antérieure à l'ouverture de la session.
 
 ## 2026-08-05 — Gestion de caisse (ouverture/fermeture + mouvements d'espèces)
 
