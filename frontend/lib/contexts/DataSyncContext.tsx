@@ -12,7 +12,7 @@ import {
 import { djangoClient } from '@/lib/django-client';
 import { buildWebSocketUrl } from '@/lib/ws-utils';
 
-export type DataModel = 'product' | 'sale' | 'movement';
+export type DataModel = 'product' | 'sale' | 'movement' | 'caisse_session' | 'caisse_movement';
 export type DataAction = 'created' | 'updated' | 'deleted';
 
 export interface DataSyncEvent {

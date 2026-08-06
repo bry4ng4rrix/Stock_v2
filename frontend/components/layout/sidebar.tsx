@@ -22,6 +22,7 @@ import {
   MessageCircle,
   ShoppingCart,
   ArrowLeftRight,
+  Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -50,6 +51,11 @@ const navigationItems = [
     label: "Ventes",
     href: "/sales",
     icon: ShoppingCart,
+  },
+  {
+    label: "Caisse",
+    href: "/caisse",
+    icon: Wallet,
   },
   {
     label: "Mouvements",

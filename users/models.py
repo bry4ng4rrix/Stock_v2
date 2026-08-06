@@ -609,7 +609,11 @@ class CaisseSession(models.Model):
     difference = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     opening_note = models.CharField(max_length=255, blank=True, null=True)
     closing_note = models.CharField(max_length=255, blank=True, null=True)
-    opened_at = models.DateTimeField(auto_now_add=True)
+    # Not auto_now_add: the gérant can backdate the real opening/closing time
+    # (e.g. the caisse physically opened at 8h but was only recorded in the
+    # app at 10h) — see CaisseSessionViewSet.open()/close(). Still defaults
+    # to "now" when not provided explicitly.
+    opened_at = models.DateTimeField(default=timezone.now)
     closed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

@@ -665,6 +665,58 @@ class DjangoAPIClient {
     },
   }
 
+  // ==================== Caisse Service ====================
+  caisse = {
+    listSessions: async (params?: { magasinId?: number; status?: 'open' | 'closed' }) => {
+      const qs = new URLSearchParams()
+      if (params?.magasinId) qs.set('magasin_id', String(params.magasinId))
+      if (params?.status) qs.set('status', params.status)
+      const suffix = qs.toString() ? `?${qs}` : ''
+      return this.get<any[]>(`/users/caisse/sessions/${suffix}`)
+    },
+
+    // 204 (no open session) is normalized to null — see request()'s handling
+    // of empty/204 bodies, which returns `undefined` here.
+    current: async (magasinId?: number) => {
+      const suffix = magasinId ? `?magasin_id=${magasinId}` : ''
+      const data = await this.get<any>(`/users/caisse/sessions/current/${suffix}`)
+      return data ?? null
+    },
+
+    open: async (data: {
+      magasin_id?: number
+      opening_balance: number | string
+      opening_note?: string
+      opened_at?: string
+    }) => {
+      return this.post<any>('/users/caisse/sessions/open/', data)
+    },
+
+    close: async (
+      sessionId: number,
+      data: { closing_balance: number | string; closing_note?: string; closed_at?: string },
+    ) => {
+      return this.post<any>(`/users/caisse/sessions/${sessionId}/close/`, data)
+    },
+
+    listMovements: async (params?: { sessionId?: number; magasinId?: number }) => {
+      const qs = new URLSearchParams()
+      if (params?.sessionId) qs.set('session_id', String(params.sessionId))
+      if (params?.magasinId) qs.set('magasin_id', String(params.magasinId))
+      const suffix = qs.toString() ? `?${qs}` : ''
+      return this.get<any[]>(`/users/caisse/movements/${suffix}`)
+    },
+
+    addMovement: async (data: {
+      session?: number
+      movement_type: 'in' | 'out'
+      amount: number | string
+      reason: string
+    }) => {
+      return this.post<any>('/users/caisse/movements/', data)
+    },
+  }
+
   // ==================== Suppliers Service ====================
   suppliers = {
     list: async () => {

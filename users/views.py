@@ -19,6 +19,7 @@ from django.db.models import Sum, F, DecimalField, Count, Value, Q
 from django.db.models.functions import Coalesce
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.utils.text import slugify
 from django.http import HttpResponse
 from django.conf import settings
@@ -1666,6 +1667,23 @@ def _accessible_magasins(user):
     return MagasinProfile.objects.none()
 
 
+def _parse_custom_datetime(raw, field_label):
+    """Optional custom timestamp for caisse open/close (backdating: the
+    gérant records the session after the fact). Returns (value, error) —
+    `value` is None (meaning "use now()") when `raw` is empty, `error` is a
+    ready-to-return Response when `raw` is present but invalid."""
+    if not raw:
+        return None, None
+    parsed = parse_datetime(raw)
+    if parsed is None:
+        return None, Response({"error": f"{field_label} invalide (format attendu : ISO 8601)."}, status=400)
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed)
+    if parsed > timezone.now():
+        return None, Response({"error": f"{field_label} ne peut pas être dans le futur."}, status=400)
+    return parsed, None
+
+
 def _resolve_own_magasin(request):
     """Magasin sur lequel `request.user` peut ouvrir/alimenter une caisse :
     le sien pour magasin/employer, celui désigné par `magasin_id`/`magasin`
@@ -1739,12 +1757,16 @@ class CaisseSessionViewSet(viewsets.ModelViewSet):
             opening_balance = Decimal(str(request.data.get("opening_balance", 0)))
         except InvalidOperation:
             return Response({"error": "Montant d'ouverture invalide."}, status=400)
+        opened_at, error = _parse_custom_datetime(request.data.get("opened_at"), "Heure d'ouverture")
+        if error:
+            return error
 
         session = CaisseSession.objects.create(
             magasin=magasin,
             opened_by=request.user,
             opening_balance=opening_balance,
             opening_note=request.data.get("opening_note") or None,
+            **({"opened_at": opened_at} if opened_at else {}),
         )
         return Response(self.get_serializer(session).data, status=201)
 
@@ -1759,6 +1781,11 @@ class CaisseSessionViewSet(viewsets.ModelViewSet):
             closing_balance = Decimal(str(request.data.get("closing_balance")))
         except InvalidOperation:
             return Response({"error": "Montant de fermeture invalide."}, status=400)
+        closed_at, error = _parse_custom_datetime(request.data.get("closed_at"), "Heure de fermeture")
+        if error:
+            return error
+        if closed_at and closed_at < session.opened_at:
+            return Response({"error": "L'heure de fermeture ne peut pas être avant l'heure d'ouverture."}, status=400)
 
         totals = session.movements.aggregate(
             total_in=Sum("amount", filter=Q(movement_type="in")),
@@ -1768,7 +1795,7 @@ class CaisseSessionViewSet(viewsets.ModelViewSet):
 
         session.status = "closed"
         session.closed_by = request.user
-        session.closed_at = timezone.now()
+        session.closed_at = closed_at or timezone.now()
         session.closing_balance = closing_balance
         session.expected_balance = expected
         session.difference = closing_balance - expected
