@@ -6,6 +6,36 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-08-06 (suite 3) — Correction : pré-remplissage par la valeur de stock, pas la dernière caisse
+
+**Prompt utilisateur :**
+> le frontend next js n'est pas encore changer , , le montant d'ouverture
+> sera la dernier valeur de stock et lors de la fermerure , la dernier
+> valeur de stock ,
+
+**Correction** de l'entrée précédente ("suite 2") : le pré-remplissage ne
+doit pas venir du `closing_balance` de la dernière session de caisse, mais
+de la **valeur de stock actuelle du magasin** (`total_stock_value`,
+`GET /magasins/stats/`) — pour l'ouverture ET la fermeture, recalculée à
+chaque fois (le stock bouge avec les ventes).
+
+**Modifications apportées :**
+- Next.js : `openOpenDialog()`/`openCloseDialog()` sont devenus async,
+  appellent `/users/magasins/stats/` à chaque ouverture de dialogue et
+  pré-remplissent avec `total_stock_value` de l'entrée correspondant au
+  magasin sélectionné. Vérifié en navigateur headless : magasin avec 2
+  produits (380 000 Ar de stock) → les deux dialogues pré-remplis à 380000.
+- Flutter : découvert que `MagasinsRepository.stats()` +
+  `Magasin.mergeStats()` existaient déjà pour `total_stock_value`, mais
+  `magasinsProvider.stores` est vide pour un compte employer (l'endpoint
+  `/magasins/` de base ne les liste pas) — donc chaque dialogue
+  (`open_caisse_dialog.dart`/`close_caisse_dialog.dart`) appelle
+  directement `magasinsRepositoryProvider.stats()` dans `initState()`
+  plutôt que de dépendre de `stores`, avec un indicateur de chargement.
+  Supprimé `CaisseState.lastClosingBalanceFor` (devenu inutile).
+- Vérifié avec `flutter analyze` (propre, seul le même problème préexistant
+  sans rapport).
+
 ## 2026-08-06 (suite 2) — Fond de caisse pré-rempli avec la dernière fermeture
 
 **Prompt utilisateur :**
