@@ -2,6 +2,13 @@ version: '3.8'
 
 services:
 
+  redis:
+    image: redis:7-alpine
+    container_name: stock_redis
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
   backend:
     build:
       context: .
@@ -14,11 +21,15 @@ services:
       DB_ENGINE: "django.db.backends.sqlite3"
       CORS_ALLOWED_ORIGINS: "http://157.173.103.147:3000 http://localhost:3000"
       CSRF_TRUSTED_ORIGINS: "http://157.173.103.147 http://157.173.103.147:3000 http://157.173.103.147:8000 http://localhost"
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_CACHE_URL: "redis://redis:6379/1"
     command: daphne -b 0.0.0.0 -p 8000 Stock.asgi:application
     volumes:
-      - .:/app    
+      - .:/app
     ports:
       - "8000:8000"
+    depends_on:
+      - redis
     restart: unless-stopped
 
   frontend:
@@ -36,3 +47,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  redis_data:

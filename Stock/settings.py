@@ -73,11 +73,37 @@ TEMPLATES = [
 WSGI_APPLICATION = 'Stock.wsgi.application'
 ASGI_APPLICATION = 'Stock.asgi.application'
 
+# Redis (cache, sessions, Channels layer). Falls back to a local Redis on the
+# default port so a bare (non-Docker) run still works; docker-compose sets
+# REDIS_URL to the "redis" service hostname.
+REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+
 CHANNEL_LAYERS = {
     "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer",
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [REDIS_URL],
+        },
     },
 }
+
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        # Separate DB index from the Channels layer above so cache flushes
+        # (cache.clear()) never wipe pub/sub channel state, and vice versa.
+        "LOCATION": os.environ.get("REDIS_CACHE_URL", REDIS_URL.rsplit("/", 1)[0] + "/1"),
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        },
+        "KEY_PREFIX": "stockv2",
+    }
+}
+
+# Django-admin sessions only (API auth is JWT, not session-based) — moving
+# them to Redis just takes load off the DB for /admin/ traffic.
+SESSION_ENGINE = "django.contrib.sessions.backends.cache"
+SESSION_CACHE_ALIAS = "default"
 
 
 # Database
