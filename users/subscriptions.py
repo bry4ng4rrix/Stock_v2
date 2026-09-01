@@ -55,6 +55,27 @@ def parse_device_name(user_agent):
     return browser or os_name or "Appareil inconnu"
 
 
+def _billing_admin(*candidates):
+    """From a list of admin candidates (priority order), return the first one
+    that actually owns an AdminProfile/subscription.
+
+    A magasin/employer's `admin` FK is set to whoever created it (see
+    MagasinViewSet.perform_create and RegisterSerializer.create), which can be
+    a co-admin (e.g. a COO) rather than the founding admin — co-admins don't
+    have their own AdminProfile, only the founder does. Without this
+    fallback, an account created by a co-admin resolves to a subscription
+    that doesn't exist and gets permanently blocked at login, even though the
+    company's real subscription is active. Falls back to the first non-null
+    candidate if none owns a profile, to keep prior behavior when a magasin
+    truly has no linked founder.
+    """
+    candidates = [c for c in candidates if c is not None]
+    for candidate in candidates:
+        if hasattr(candidate, "admin_profile"):
+            return candidate
+    return candidates[0] if candidates else None
+
+
 def get_subscription_owner(user):
     """Resolve the CustomUser (role=admin) whose AdminProfile.subscription
     governs this user's login, for admin/magasin/employer roles."""
@@ -67,20 +88,24 @@ def get_subscription_owner(user):
             .order_by("created_at")
             .first()
         )
-        return magasin.admin if magasin else user
+        if not magasin:
+            return user
+        return _billing_admin(magasin.admin, *magasin.admins.all())
 
     if user.role == "magasin":
         mp = getattr(user, "magasin_profile", None)
-        return mp.admin if mp else None
+        if not mp:
+            return None
+        return _billing_admin(mp.admin, *mp.admins.all())
 
     if user.role == "employer":
         ep = getattr(user, "employer_profile", None)
         if not ep:
             return None
         if ep.admin:
-            return ep.admin
+            return _billing_admin(ep.admin)
         if ep.magasin:
-            return ep.magasin.admin
+            return _billing_admin(ep.magasin.admin, *ep.magasin.admins.all())
         return None
 
     return None
