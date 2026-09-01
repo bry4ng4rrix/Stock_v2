@@ -2,6 +2,22 @@ version: '3.8'
 
 services:
 
+  db:
+    image: postgres:16-alpine
+    container_name: stock_postgres
+    environment:
+      POSTGRES_DB: stock_db
+      POSTGRES_USER: stock
+      POSTGRES_PASSWORD: "skdvrlNl1tUay9vSbW3y1GuXNTIapmn9"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stock -d stock_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     container_name: stock_redis
@@ -18,7 +34,12 @@ services:
       DJANGO_SETTINGS_MODULE: Stock.settings
       DEBUG: "True"
       ALLOWED_HOSTS: "157.173.103.147 localhost 127.0.0.1 0.0.0.0"
-      DB_ENGINE: "django.db.backends.sqlite3"
+      DB_ENGINE: "django.db.backends.postgresql"
+      DB_NAME: stock_db
+      DB_USER: stock
+      DB_PASSWORD: "skdvrlNl1tUay9vSbW3y1GuXNTIapmn9"
+      DB_HOST: db
+      DB_PORT: "5432"
       CORS_ALLOWED_ORIGINS: "http://157.173.103.147:3000 http://localhost:3000"
       CSRF_TRUSTED_ORIGINS: "http://157.173.103.147 http://157.173.103.147:3000 http://157.173.103.147:8000 http://localhost"
       REDIS_URL: "redis://redis:6379/0"
@@ -29,7 +50,10 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -50,3 +74,4 @@ services:
 
 volumes:
   redis_data:
+  postgres_data:

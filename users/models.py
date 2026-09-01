@@ -552,7 +552,10 @@ class Movement(models.Model):
     """Record stock movements (adding/removing) for products."""
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="movements")
     product_name = models.CharField(max_length=255, blank=True, null=True)
-    variant_label = models.CharField(max_length=255, blank=True, null=True)
+    # TextField, not CharField: this is a generated summary that lists every
+    # affected variant on a bulk product update and can run well past 255
+    # characters (SQLite never enforced the old length cap, Postgres does).
+    variant_label = models.TextField(blank=True, null=True)
     magasin = models.ForeignKey(MagasinProfile, on_delete=models.SET_NULL, null=True, blank=True, related_name="movements")
     changed_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="movements")
     previous_quantity = models.IntegerField()
@@ -562,7 +565,7 @@ class Movement(models.Model):
     new_unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     previous_shell_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     new_shell_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    note = models.CharField(max_length=255, blank=True, null=True)
+    note = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
