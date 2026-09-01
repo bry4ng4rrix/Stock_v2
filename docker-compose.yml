@@ -9,6 +9,26 @@ services:
       POSTGRES_DB: stock_db
       POSTGRES_USER: stock
       POSTGRES_PASSWORD: "skdvrlNl1tUay9vSbW3y1GuXNTIapmn9"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=3GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - max_connections=60
+    mem_limit: 1.5g
+    cpus: 1.5
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

@@ -18,7 +18,7 @@ def bool_env(value, default=False):
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-dev-key")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = bool_env(os.environ.get("DEBUG", "True"))
+DEBUG = bool_env(os.environ.get("DEBUG", "False"))
 
 
 
@@ -119,6 +119,11 @@ if DATABASE_ENGINE == "django.db.backends.postgresql":
             "PASSWORD": os.environ.get("DB_PASSWORD", "stock"),
             "HOST": os.environ.get("DB_HOST", "db"),
             "PORT": os.environ.get("DB_PORT", "5432"),
+            # Reuse connections across requests instead of opening a fresh
+            # TCP+auth handshake per request (the default for SQLite, where
+            # this cost doesn't exist, was 0 — no pooling).
+            "CONN_MAX_AGE": 600,
+            "CONN_HEALTH_CHECKS": True,
         }
     }
 else:
