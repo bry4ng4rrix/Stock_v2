@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -3117,10 +3118,14 @@ class TransferProductsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def _unique_reference(self, base_ref, dest_id):
-        candidate = f"{base_ref}-TR{dest_id}"
+        # Strip any -TRxx suffix a previous transfer already added, so refs
+        # reflect only the current store instead of stacking up on every hop
+        # (…-TR16-TR15-TR16… as a product bounces between magasins).
+        clean_ref = re.sub(r"-TR\d+.*$", "", base_ref)
+        candidate = f"{clean_ref}-TR{dest_id}"
         counter = 1
         while Product.objects.filter(reference=candidate).exists():
-            candidate = f"{base_ref}-TR{dest_id}-{counter}"
+            candidate = f"{clean_ref}-TR{dest_id}-{counter}"
             counter += 1
         return candidate
 
