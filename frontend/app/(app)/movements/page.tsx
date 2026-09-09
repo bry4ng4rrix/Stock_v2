@@ -569,11 +569,20 @@ export default function MovementsPage() {
                             const p = productsById[m.product];
                             const brand = p?.brand;
                             const category = p?.category;
-                            if (!brand && !category) return null;
+                            const description = p?.description;
                             return (
-                              <p className="text-xs text-muted-foreground">
-                                {[brand, category].filter(Boolean).join(" · ")}
-                              </p>
+                              <>
+                                {(brand || category) && (
+                                  <p className="text-xs text-muted-foreground">
+                                    {[brand, category].filter(Boolean).join(" · ")}
+                                  </p>
+                                )}
+                                {description && (
+                                  <p className="text-xs text-muted-foreground italic">
+                                    {description}
+                                  </p>
+                                )}
+                              </>
                             );
                           })()}
                         </TableCell>
@@ -688,6 +697,7 @@ export default function MovementsPage() {
         groups={groupedByDay.groups}
         today={groupedByDay.today}
         isManager={isManager}
+        productsById={productsById}
       />
     </div>
   );
@@ -697,10 +707,12 @@ function DailyMovementsTable({
   groups,
   today,
   isManager,
+  productsById,
 }: {
   groups: Record<string, any[]>;
   today: string;
   isManager: boolean;
+  productsById: Record<number, any>;
 }) {
   const sortedDates = Object.keys(groups)
     .filter((d) => d !== today)
@@ -771,8 +783,15 @@ function DailyMovementsTable({
                           minute: "2-digit",
                         })}
                       </TableCell>
-                      <TableCell className="font-medium text-sm">
-                        {m.product_name || `Produit #${m.product}`}
+                      <TableCell>
+                        <p className="font-medium text-sm">
+                          {m.product_name || `Produit #${m.product}`}
+                        </p>
+                        {productsById[m.product]?.description && (
+                          <p className="text-xs text-muted-foreground italic">
+                            {productsById[m.product].description}
+                          </p>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge
