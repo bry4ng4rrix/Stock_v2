@@ -3,5 +3,7 @@ db.sqlite3
 *.sqlite3
 .env
 backups/
-
+media/  
+*.jpg
+*.jpeg
 .env.locale
