@@ -474,7 +474,11 @@ class Sale(models.Model):
     payment_due_date = models.DateField(null=True, blank=True)
     total_price = models.DecimalField(max_digits=12, decimal_places=2, editable=False, default=0)
     total_profit = models.DecimalField(max_digits=12, decimal_places=2, editable=False, default=0)
-    sold_at = models.DateTimeField(auto_now_add=True)
+    # Anciennement `auto_now_add=True` (non modifiable) : passé en champ
+    # normal avec valeur par défaut pour permettre au client d'antidater
+    # une vente (date de vente optionnelle) — reste "maintenant" par défaut
+    # si non fourni.
+    sold_at = models.DateTimeField(default=timezone.now)
 
     def save(self, *args, **kwargs):
         fallback_purchase_price = self.product.purchase_price
@@ -557,6 +561,21 @@ class Movement(models.Model):
     # characters (SQLite never enforced the old length cap, Postgres does).
     variant_label = models.TextField(blank=True, null=True)
     magasin = models.ForeignKey(MagasinProfile, on_delete=models.SET_NULL, null=True, blank=True, related_name="movements")
+    # Renseignés uniquement pour un mouvement issu d'un transfert
+    # (TransferProductsView) : `magasin` ci-dessus reste le magasin de CE
+    # mouvement (sortie ou entrée), tandis que ces deux champs donnent le
+    # contexte complet source → destination pour l'affichage.
+    source_magasin = models.ForeignKey(
+        MagasinProfile, on_delete=models.SET_NULL, null=True, blank=True, related_name="movements_as_source"
+    )
+    destination_magasin = models.ForeignKey(
+        MagasinProfile, on_delete=models.SET_NULL, null=True, blank=True, related_name="movements_as_destination"
+    )
+    # Identifiant partagé par tous les mouvements créés par un même appel à
+    # TransferProductsView (potentiellement plusieurs produits/variantes en
+    # une fois) — permet de regrouper côté client les lignes d'un même
+    # transfert (ex. "3 variantes" plutôt que 3 lignes séparées).
+    transfer_batch = models.UUIDField(null=True, blank=True, db_index=True)
     changed_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name="movements")
     previous_quantity = models.IntegerField()
     new_quantity = models.IntegerField()

@@ -271,7 +271,14 @@ class TicketSerializer(serializers.ModelSerializer):
 class MovementSerializer(serializers.ModelSerializer):
     product_name = serializers.SerializerMethodField(read_only=True)
     product_reference = serializers.CharField(source="product.reference", read_only=True)
+    product_category = serializers.CharField(source="product.category", read_only=True, allow_null=True)
+    product_description = serializers.CharField(source="product.description", read_only=True, allow_null=True)
     magasin_name = serializers.CharField(source="magasin.shop_name", read_only=True)
+    # Uniquement renseignés pour un mouvement issu d'un transfert — `None`
+    # sinon, d'où un SerializerMethodField plutôt qu'un CharField(source=...)
+    # qui lèverait une erreur en tentant `.shop_name` sur `None`.
+    source_magasin_name = serializers.SerializerMethodField(read_only=True)
+    destination_magasin_name = serializers.SerializerMethodField(read_only=True)
     changed_by_name = serializers.CharField(source="changed_by.full_name", read_only=True)
     changed_by_username = serializers.CharField(source="changed_by.username", read_only=True)
     movement_type = serializers.SerializerMethodField(read_only=True)
@@ -283,9 +290,16 @@ class MovementSerializer(serializers.ModelSerializer):
             "product",
             "product_name",
             "product_reference",
+            "product_category",
+            "product_description",
             "variant_label",
             "magasin",
             "magasin_name",
+            "source_magasin",
+            "source_magasin_name",
+            "destination_magasin",
+            "destination_magasin_name",
+            "transfer_batch",
             "changed_by",
             "changed_by_name",
             "changed_by_username",
@@ -306,7 +320,14 @@ class MovementSerializer(serializers.ModelSerializer):
             "movement_type",
             "product_name",
             "product_reference",
+            "product_category",
+            "product_description",
             "magasin_name",
+            "source_magasin",
+            "source_magasin_name",
+            "destination_magasin",
+            "destination_magasin_name",
+            "transfer_batch",
             "changed_by_name",
         ]
 
@@ -315,6 +336,12 @@ class MovementSerializer(serializers.ModelSerializer):
 
     def get_movement_type(self, obj):
         return obj.movement_type
+
+    def get_source_magasin_name(self, obj):
+        return obj.source_magasin.shop_name if obj.source_magasin else None
+
+    def get_destination_magasin_name(self, obj):
+        return obj.destination_magasin.shop_name if obj.destination_magasin else None
 
 
 class CaisseMovementSerializer(serializers.ModelSerializer):

@@ -5,6 +5,7 @@ import re
 import shutil
 import tempfile
 import time
+import uuid
 import zipfile
 
 import psutil
@@ -3159,6 +3160,10 @@ class TransferProductsView(APIView):
 
         transfer_note = f"Transfert du magasin {source_magasin.id} au magasin {dest_magasin.id} par {user.full_name}"
         transferred_summary = []
+        # Partagé par tous les mouvements créés dans cet appel (potentiellement
+        # plusieurs produits/variantes en une fois) — permet au client de
+        # regrouper les lignes d'un même transfert à l'affichage.
+        transfer_batch = uuid.uuid4()
 
         try:
           with transaction.atomic():
@@ -3208,6 +3213,9 @@ class TransferProductsView(APIView):
                         product_name=product.name,
                         variant_label=variant_label,
                         magasin=source_magasin,
+                        source_magasin=source_magasin,
+                        destination_magasin=dest_magasin,
+                        transfer_batch=transfer_batch,
                         changed_by=user,
                         previous_quantity=previous_qty,
                         new_quantity=product.initial_quantity,
@@ -3256,6 +3264,9 @@ class TransferProductsView(APIView):
                         product_name=dest_product.name,
                         variant_label=variant_label,
                         magasin=dest_magasin,
+                        source_magasin=source_magasin,
+                        destination_magasin=dest_magasin,
+                        transfer_batch=transfer_batch,
                         changed_by=user,
                         previous_quantity=dest_previous,
                         new_quantity=dest_product.initial_quantity,
@@ -3283,6 +3294,9 @@ class TransferProductsView(APIView):
                         product=product,
                         product_name=product.name,
                         magasin=dest_magasin,
+                        source_magasin=source_magasin,
+                        destination_magasin=dest_magasin,
+                        transfer_batch=transfer_batch,
                         changed_by=user,
                         previous_quantity=stock,
                         new_quantity=stock,
@@ -3298,6 +3312,9 @@ class TransferProductsView(APIView):
                     product=product,
                     product_name=product.name,
                     magasin=source_magasin,
+                    source_magasin=source_magasin,
+                    destination_magasin=dest_magasin,
+                    transfer_batch=transfer_batch,
                     changed_by=user,
                     previous_quantity=previous_qty,
                     new_quantity=product.initial_quantity,
@@ -3331,6 +3348,9 @@ class TransferProductsView(APIView):
                     product=dest_product,
                     product_name=dest_product.name,
                     magasin=dest_magasin,
+                    source_magasin=source_magasin,
+                    destination_magasin=dest_magasin,
+                    transfer_batch=transfer_batch,
                     changed_by=user,
                     previous_quantity=dest_previous,
                     new_quantity=dest_product.initial_quantity,
