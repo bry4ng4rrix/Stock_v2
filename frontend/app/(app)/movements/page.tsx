@@ -766,7 +766,9 @@ function DailyMovementsTable({
                 <TableHeader>
                   <TableRow>
                     <TableHead>Heure</TableHead>
+                    <TableHead>Référence</TableHead>
                     <TableHead>Produit</TableHead>
+                    <TableHead>Variante(s)</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead className="text-right">Qté</TableHead>
                     <TableHead>Note</TableHead>
@@ -783,6 +785,9 @@ function DailyMovementsTable({
                           minute: "2-digit",
                         })}
                       </TableCell>
+                      <TableCell className="text-sm">
+                        {m.product_reference || "-"}
+                      </TableCell>
                       <TableCell>
                         <p className="font-medium text-sm">
                           {m.product_name || `Produit #${m.product}`}
@@ -792,6 +797,59 @@ function DailyMovementsTable({
                             {productsById[m.product].description}
                           </p>
                         )}
+                      </TableCell>
+                      <TableCell>
+                        {(() => {
+                          const variants = parseVariantEntries(
+                            m.variant_label,
+                            m.change,
+                          );
+                          if (variants.length === 0) {
+                            return (
+                              <span className="text-sm text-muted-foreground">
+                                -
+                              </span>
+                            );
+                          }
+                          if (variants.length === 1) {
+                            const v = variants[0];
+                            return (
+                              <Badge
+                                variant="outline"
+                                className="font-normal border-purple-200 text-sky-700 bg-purple-50/50"
+                              >
+                                {v.name} {v.qty > 0 ? "+" : ""}
+                                {v.qty}
+                              </Badge>
+                            );
+                          }
+                          return (
+                            <HoverCard>
+                              <HoverCardTrigger asChild>
+                                <Badge
+                                  variant="outline"
+                                  className="font-normal border-purple-200 text-purple-700 bg-purple-50/50 cursor-default"
+                                >
+                                  {variants.length} variantes
+                                </Badge>
+                              </HoverCardTrigger>
+                              <HoverCardContent className="w-auto p-2">
+                                <div className="flex flex-col gap-1">
+                                  {variants.map((v, i) => (
+                                    <Badge
+                                      key={i}
+                                      variant="outline"
+                                      className="font-normal border-purple-200 text-purple-700 bg-purple-50/50"
+                                    >
+                                      {v.name} {v.qty > 0 ? "+" : ""}
+                                      {v.qty}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </HoverCardContent>
+                            </HoverCard>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell>
                         <Badge

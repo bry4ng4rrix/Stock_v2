@@ -3223,7 +3223,13 @@ class TransferProductsView(APIView):
                         note=f"{transfer_note} (sortie partielle)",
                     )
 
-                    dest_product = Product.objects.filter(magasin=dest_magasin, name=product.name).first()
+                    # Match on name AND description: two products can share a
+                    # generic name (e.g. "Abaya", "CHAUSSURE ADULTE") while
+                    # being genuinely different items — matching by name alone
+                    # silently merged unrelated products' stock on transfer.
+                    dest_product = Product.objects.filter(
+                        magasin=dest_magasin, name=product.name, description=product.description
+                    ).first()
                     if not dest_product:
                         dest_product = Product.objects.create(
                             name=product.name,
@@ -3322,7 +3328,13 @@ class TransferProductsView(APIView):
                     note=f"{transfer_note} (sortie partielle)",
                 )
 
-                dest_product = Product.objects.filter(magasin=dest_magasin, name=product.name).first()
+                # Match on name AND description: two products can share a
+                # generic name (e.g. "Abaya", "CHAUSSURE ADULTE") while being
+                # genuinely different items — matching by name alone silently
+                # merged unrelated products' stock together on transfer.
+                dest_product = Product.objects.filter(
+                    magasin=dest_magasin, name=product.name, description=product.description
+                ).first()
                 if dest_product:
                     dest_previous = int(dest_product.initial_quantity or 0)
                     dest_product.initial_quantity = dest_previous + quantity
