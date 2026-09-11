@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { djangoClient } from '@/lib/django-client';
 import { useCurrentUser } from '@/lib/auth/useCurrentUser';
 import { useRealtimeRefresh } from '@/lib/hooks/useRealtimeRefresh';
+import { usePagination, TablePagination } from '@/components/table-pagination';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -48,6 +49,7 @@ export default function CaissePage() {
 
   const [session, setSession] = useState<any | null>(null);
   const [history, setHistory] = useState<any[]>([]);
+  const historyPagination = usePagination(history, 50);
   const [loading, setLoading] = useState(true);
 
   const [openDialogOpen, setOpenDialogOpen] = useState(false);
@@ -393,7 +395,7 @@ export default function CaissePage() {
                   <TableBody>
                     {history.length === 0 ? (
                       <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Aucune session fermée</TableCell></TableRow>
-                    ) : history.map((s: any) => (
+                    ) : historyPagination.paginated.map((s: any) => (
                       <TableRow key={s.id}>
                         <TableCell className="text-sm">{formatDateTime(s.opened_at)}</TableCell>
                         <TableCell className="text-sm">{formatDateTime(s.closed_at)}</TableCell>
@@ -411,6 +413,13 @@ export default function CaissePage() {
                     ))}
                   </TableBody>
                 </Table>
+                <TablePagination
+                  page={historyPagination.page}
+                  pageCount={historyPagination.pageCount}
+                  onPageChange={historyPagination.setPage}
+                  total={historyPagination.total}
+                  pageSize={historyPagination.pageSize}
+                />
               </div>
             </CardContent>
           </Card>

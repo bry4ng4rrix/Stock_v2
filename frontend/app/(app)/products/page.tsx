@@ -55,6 +55,7 @@ import {
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { toast } from "sonner";
 import { useRealtimeRefresh } from "@/lib/hooks/useRealtimeRefresh";
+import { usePagination, TablePagination } from "@/components/table-pagination";
 import { generateSimpleQRCode } from "@/lib/qrcode-generator";
 import { useCurrentUser } from "@/lib/auth/useCurrentUser";
 import {
@@ -369,6 +370,8 @@ export default function ProductsPage() {
     const matchStatus = selectedStatus === "all" || status === selectedStatus;
     return matchSearch && matchCat && matchStatus;
   });
+
+  const productsPagination = usePagination(filteredProducts, 50);
 
   const statusColor = (s: string) =>
     ({
@@ -1348,7 +1351,7 @@ export default function ProductsPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredProducts.map((product) => {
+                    productsPagination.paginated.map((product) => {
                       const status = getStatus(product);
                       const expiry = getExpiryInfo(product.expiry_date);
                       const img = imageUrl(product.image1);
@@ -1586,6 +1589,13 @@ export default function ProductsPage() {
                   )}
                 </TableBody>
               </Table>
+              <TablePagination
+                page={productsPagination.page}
+                pageCount={productsPagination.pageCount}
+                onPageChange={productsPagination.setPage}
+                total={productsPagination.total}
+                pageSize={productsPagination.pageSize}
+              />
             </div>
           )}
         </CardContent>

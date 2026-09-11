@@ -24,6 +24,7 @@ import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { useCurrentUser } from '@/lib/auth/useCurrentUser';
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
+import { usePagination, TablePagination } from '@/components/table-pagination';
 
 const SUB_STATUS_LABEL: Record<string, string> = {
   active: 'Actif',
@@ -374,6 +375,9 @@ export default function UsersPage() {
     (u.email || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const allUsersPagination = usePagination(filteredAll, 50);
+  const pendingUsersPagination = usePagination(filteredPending, 50);
+
   const getRoleIcon = (role: string) => {
     if (role === 'admin') return <Shield className="h-4 w-4 text-purple-500" />;
     if (role === 'magasin') return <Briefcase className="h-4 w-4 text-blue-500" />;
@@ -544,7 +548,7 @@ export default function UsersPage() {
                     <TableBody>
                       {filteredAll.length === 0 ? (
                         <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Aucun utilisateur trouvé</TableCell></TableRow>
-                      ) : filteredAll.map(u => (
+                      ) : allUsersPagination.paginated.map(u => (
                         <TableRow key={u.id}>
                           <TableCell>
                             <div className="font-medium">{u.full_name || 'Sans nom'}</div>
@@ -642,6 +646,13 @@ export default function UsersPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <TablePagination
+                    page={allUsersPagination.page}
+                    pageCount={allUsersPagination.pageCount}
+                    onPageChange={allUsersPagination.setPage}
+                    total={allUsersPagination.total}
+                    pageSize={allUsersPagination.pageSize}
+                  />
                 </div>
               )}
             </CardContent>
@@ -676,7 +687,7 @@ export default function UsersPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredPending.map(u => (
+                      {pendingUsersPagination.paginated.map(u => (
                         <TableRow key={u.id}>
                           <TableCell>
                             <div className="font-medium">{u.full_name || 'Sans nom'}</div>
@@ -716,6 +727,13 @@ export default function UsersPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <TablePagination
+                    page={pendingUsersPagination.page}
+                    pageCount={pendingUsersPagination.pageCount}
+                    onPageChange={pendingUsersPagination.setPage}
+                    total={pendingUsersPagination.total}
+                    pageSize={pendingUsersPagination.pageSize}
+                  />
                 </div>
               )}
             </CardContent>

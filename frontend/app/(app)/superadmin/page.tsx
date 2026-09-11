@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { Shield, Users, Store, RefreshCw, Trash2 } from 'lucide-react';
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
+import { usePagination, TablePagination } from '@/components/table-pagination';
 
 const roleLabel: Record<string, string> = {
   admin: 'Administrateur',
@@ -54,6 +55,9 @@ export default function SuperAdminPage() {
     s.manager ? { ...s.manager, shop_name: s.shop_name } : null,
     ...(s.employers || []).map((e: any) => ({ ...e, shop_name: s.shop_name })),
   ]).filter(Boolean);
+
+  const storesPagination = usePagination(stores, 50);
+  const allUsersPagination = usePagination(allUsers, 50);
 
   const handleChangeRole = async (userId: number, newRole: string) => {
     setChangingRole(userId);
@@ -136,7 +140,7 @@ export default function SuperAdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {stores.map((s: any) => {
+              {storesPagination.paginated.map((s: any) => {
                 const isActive = !!s.manager?.is_confirmed;
                 const memberCount = (s.employers?.length || 0) + (s.manager ? 1 : 0);
                 return (
@@ -154,6 +158,13 @@ export default function SuperAdminPage() {
               })}
             </TableBody>
           </Table>
+          <TablePagination
+            page={storesPagination.page}
+            pageCount={storesPagination.pageCount}
+            onPageChange={storesPagination.setPage}
+            total={storesPagination.total}
+            pageSize={storesPagination.pageSize}
+          />
         </CardContent>
       </Card>
 
@@ -176,7 +187,7 @@ export default function SuperAdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {allUsers.map((u: any) => (
+              {allUsersPagination.paginated.map((u: any) => (
                 <TableRow key={u.id}>
                   <TableCell className="font-medium">{u.full_name}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{u.email}</TableCell>
@@ -224,6 +235,13 @@ export default function SuperAdminPage() {
               ))}
             </TableBody>
           </Table>
+          <TablePagination
+            page={allUsersPagination.page}
+            pageCount={allUsersPagination.pageCount}
+            onPageChange={allUsersPagination.setPage}
+            total={allUsersPagination.total}
+            pageSize={allUsersPagination.pageSize}
+          />
         </CardContent>
       </Card>
 

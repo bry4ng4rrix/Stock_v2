@@ -38,6 +38,7 @@ import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useCurrentUser } from "@/lib/auth/useCurrentUser";
 import { useRealtimeRefresh } from "@/lib/hooks/useRealtimeRefresh";
+import { usePagination, TablePagination } from "@/components/table-pagination";
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("fr-MG", { minimumFractionDigits: 0 }).format(
@@ -141,6 +142,8 @@ export default function MovementsPage() {
       }),
     [movements, searchTerm, startDate, endDate],
   );
+
+  const movementsPagination = usePagination(filteredMovements, 50);
 
   const statsFilteredMovements = useMemo(
     () =>
@@ -553,7 +556,7 @@ export default function MovementsPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredMovements.map((m) => (
+                    movementsPagination.paginated.map((m) => (
                       <TableRow key={m.id}>
                         <TableCell className="text-sm">
                           {formatDate(m.created_at)}
@@ -566,10 +569,13 @@ export default function MovementsPage() {
                             {m.product_name || `Produit #${m.product}`}
                           </p>
                           {(() => {
-                            const p = productsById[m.product];
-                            const brand = p?.brand;
-                            const category = p?.category;
-                            const description = p?.description;
+                            // Prefer the serializer's own live fields (always
+                            // in sync with the movement's current product FK)
+                            // over the separately-fetched products list, which
+                            // can lag behind for just-created products.
+                            const brand = productsById[m.product]?.brand;
+                            const category = m.product_category;
+                            const description = m.product_description;
                             return (
                               <>
                                 {(brand || category) && (
@@ -687,6 +693,13 @@ export default function MovementsPage() {
                   )}
                 </TableBody>
               </Table>
+              <TablePagination
+                page={movementsPagination.page}
+                pageCount={movementsPagination.pageCount}
+                onPageChange={movementsPagination.setPage}
+                total={movementsPagination.total}
+                pageSize={movementsPagination.pageSize}
+              />
             </div>
           )}
         </CardContent>
@@ -792,9 +805,9 @@ function DailyMovementsTable({
                         <p className="font-medium text-sm">
                           {m.product_name || `Produit #${m.product}`}
                         </p>
-                        {productsById[m.product]?.description && (
+                        {m.product_description && (
                           <p className="text-xs text-muted-foreground italic">
-                            {productsById[m.product].description}
+                            {m.product_description}
                           </p>
                         )}
                       </TableCell>

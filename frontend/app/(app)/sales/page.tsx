@@ -60,6 +60,7 @@ import * as XLSX from "xlsx";
 
 import { toast } from "sonner";
 import { useRealtimeRefresh } from "@/lib/hooks/useRealtimeRefresh";
+import { usePagination, TablePagination } from "@/components/table-pagination";
 
 interface Sale {
   id: number;
@@ -463,6 +464,8 @@ export default function SalesPage() {
       );
     });
   }, [sales, searchTerm, saleStartDate, saleEndDate, dueStartDate, dueEndDate]);
+
+  const salesPagination = usePagination(filteredSales, 50);
 
   const filteredStores = useMemo(() => {
     const term = storeSearch.toLowerCase();
@@ -2012,7 +2015,7 @@ export default function SalesPage() {
                 </TableHeader>
 
                 <TableBody>
-                  {filteredSales.map((sale) => (
+                  {salesPagination.paginated.map((sale) => (
                     <TableRow key={sale.id}>
                       <TableCell>{formatDate(sale.sold_at)}</TableCell>
 
@@ -2092,6 +2095,13 @@ export default function SalesPage() {
                   ))}
                 </TableBody>
               </Table>
+              <TablePagination
+                page={salesPagination.page}
+                pageCount={salesPagination.pageCount}
+                onPageChange={salesPagination.setPage}
+                total={salesPagination.total}
+                pageSize={salesPagination.pageSize}
+              />
             </div>
           )}
         </CardContent>

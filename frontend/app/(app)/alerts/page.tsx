@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AlertTriangle, Package, RefreshCw } from 'lucide-react';
 import { useRealtimeRefresh } from '@/lib/hooks/useRealtimeRefresh';
+import { usePagination, TablePagination } from '@/components/table-pagination';
 
 const fmt = (n: number) => new Intl.NumberFormat('fr-MG').format(Math.round(n));
 
@@ -39,12 +40,22 @@ export default function AlertsPage() {
   const outOfStock = products.filter(p => p.initial_quantity === 0);
   const expiringSoon = products.filter(p => p.expiry_date && new Date(p.expiry_date) <= in30Days && new Date(p.expiry_date) >= today);
   const expired = products.filter(p => p.expiry_date && new Date(p.expiry_date) < today);
+  const expiringItems = [...expired, ...expiringSoon];
 
-  const AlertTable = ({ items, emptyMsg, columns }: { items: any[]; emptyMsg: string; columns: { key: string; label: string }[] }) => (
+  const outOfStockPagination = usePagination(outOfStock, 50);
+  const lowStockPagination = usePagination(lowStock, 50);
+  const expiringPagination = usePagination(expiringItems, 50);
+
+  const AlertTable = ({ pagination, emptyMsg, columns }: {
+    pagination: { paginated: any[]; total: number; page: number; pageCount: number; pageSize: number; setPage: (p: number) => void };
+    emptyMsg: string;
+    columns: { key: string; label: string }[];
+  }) => (
     loading ? <Skeleton className="h-24 w-full" /> :
-    items.length === 0 ? (
+    pagination.total === 0 ? (
       <p className="text-sm text-muted-foreground text-center py-6">{emptyMsg}</p>
     ) : (
+      <>
       <Table>
         <TableHeader>
           <TableRow>
@@ -52,7 +63,7 @@ export default function AlertsPage() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {items.map(p => (
+          {pagination.paginated.map(p => (
             <TableRow key={p.id}>
               {columns.map(c => (
                 <TableCell key={c.key}>
@@ -75,6 +86,14 @@ export default function AlertsPage() {
           ))}
         </TableBody>
       </Table>
+      <TablePagination
+        page={pagination.page}
+        pageCount={pagination.pageCount}
+        onPageChange={pagination.setPage}
+        total={pagination.total}
+        pageSize={pagination.pageSize}
+      />
+      </>
     )
   );
 
@@ -122,7 +141,7 @@ export default function AlertsPage() {
         </CardHeader>
         <CardContent>
           <AlertTable
-            items={outOfStock}
+            pagination={outOfStockPagination}
             emptyMsg="Aucun produit en rupture de stock"
             columns={[
               { key: 'name', label: 'Produit' },
@@ -144,7 +163,7 @@ export default function AlertsPage() {
         </CardHeader>
         <CardContent>
           <AlertTable
-            items={lowStock}
+            pagination={lowStockPagination}
             emptyMsg="Tous les stocks sont au-dessus du seuil d'alerte"
             columns={[
               { key: 'name', label: 'Produit' },
@@ -167,7 +186,7 @@ export default function AlertsPage() {
           </CardHeader>
           <CardContent>
             <AlertTable
-              items={[...expired, ...expiringSoon]}
+              pagination={expiringPagination}
               emptyMsg="Aucun produit proche de la péremption"
               columns={[
                 { key: 'name', label: 'Produit' },
