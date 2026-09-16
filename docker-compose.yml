@@ -67,7 +67,7 @@ services:
       # Ollama tourne sur l'hôte, hors du réseau compose : on l'atteint par la
       # passerelle docker0 (127.0.0.1 désignerait le conteneur lui-même).
       # Sert au rapprochement de fiches produit lors des transferts.
-      OLLAMA_URL: "${OLLAMA_URL:-http://172.17.0.1:11434}"
+      OLLAMA_URL: "${OLLAMA_URL:-http://172.18.0.1:11434}"
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3:4b}"
       AI_PRODUCT_MATCHING_ENABLED: "${AI_PRODUCT_MATCHING_ENABLED:-True}"
       AI_ASSISTANT_ENABLED: "${AI_ASSISTANT_ENABLED:-True}"
@@ -104,3 +104,13 @@ services:
 volumes:
   redis_data:
   postgres_data:
+
+networks:
+  default:
+    # Épinglé pour que la passerelle reste 172.18.0.1 (utilisée par
+    # OLLAMA_URL) même si ce réseau est un jour recréé — sans ça, Docker
+    # réattribue une passerelle depuis son pool d'adresses par défaut.
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+          gateway: 172.18.0.1

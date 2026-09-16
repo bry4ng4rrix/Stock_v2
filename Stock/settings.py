@@ -218,8 +218,12 @@ CSRF_TRUSTED_ORIGINS = _csrf_env.split() if _csrf_env else [
 # rapprochement déterministe (nom + référence identiques).
 
 # Ollama tourne sur l'hôte du VPS, hors du conteneur : on l'atteint par la
-# passerelle docker0 plutôt que par 127.0.0.1, qui désignerait le conteneur.
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://172.17.0.1:11434")
+# passerelle du réseau Docker du service `backend`, pas par 127.0.0.1 (qui
+# désignerait le conteneur) ni par 172.17.0.1 (passerelle du bridge "default"
+# — le service `backend` tourne sur le réseau compose dédié "stock_v2_default",
+# dont la passerelle est 172.18.0.1 ; vérifier avec
+# `docker network inspect stock_v2_default` si ça change un jour).
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://172.18.0.1:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
 OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT", "20"))
 
