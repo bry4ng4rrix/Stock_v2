@@ -205,3 +205,44 @@ CSRF_TRUSTED_ORIGINS = _csrf_env.split() if _csrf_env else [
     "http://157.173.103.147:3000",
     "http://157.173.103.147:8000",
 ]
+
+
+# =====================================
+# RAPPROCHEMENT DE PRODUITS PAR IA (OLLAMA)
+# =====================================
+# Utilisé lors des transferts entre magasins pour reconnaître qu'une fiche
+# existe déjà à destination (même nom / référence / description / prix) et
+# additionner les quantités au lieu de créer un doublon. Voir
+# users/ai_matching.py. Tout est désactivable sans redéploiement de code via
+# AI_PRODUCT_MATCHING_ENABLED : le transfert retombe alors sur le
+# rapprochement déterministe (nom + référence identiques).
+
+# Ollama tourne sur l'hôte du VPS, hors du conteneur : on l'atteint par la
+# passerelle docker0 plutôt que par 127.0.0.1, qui désignerait le conteneur.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://172.17.0.1:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
+OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT", "20"))
+
+AI_PRODUCT_MATCHING_ENABLED = bool_env(os.environ.get("AI_PRODUCT_MATCHING_ENABLED", "True"), True)
+# En dessous de ce seuil la proposition du modèle est ignorée : mieux vaut un
+# doublon (corrigeable à la main) qu'une fusion erronée de deux stocks.
+AI_MATCH_MIN_CONFIDENCE = float(os.environ.get("AI_MATCH_MIN_CONFIDENCE", "0.7"))
+# Nombre de fiches soumises au modèle en une fois.
+AI_MATCH_MAX_CANDIDATES = int(os.environ.get("AI_MATCH_MAX_CANDIDATES", "25"))
+# Budget de temps cumulé pour un transfert entier, afin qu'un lot de vingt
+# produits ne puisse pas immobiliser la requête HTTP.
+AI_MATCH_TIME_BUDGET = float(os.environ.get("AI_MATCH_TIME_BUDGET", "45"))
+
+# =====================================
+# ASSISTANT CONVERSATIONNEL (OLLAMA)
+# =====================================
+# Bulle d'assistance dans l'application (web et mobile) : questions sur le
+# stock/ventes et actions confirmées, toutes journalisées dans Movement.
+# Voir users/assistant.py.
+AI_ASSISTANT_ENABLED = bool_env(os.environ.get("AI_ASSISTANT_ENABLED", "True"), True)
+# Modèle dédié à l'assistant (par défaut le même que le rapprochement). Il
+# doit supporter l'appel d'outils ("tools") : qwen3 le fait, qwen2.5:0.5b aussi.
+OLLAMA_ASSISTANT_MODEL = os.environ.get("OLLAMA_ASSISTANT_MODEL", OLLAMA_MODEL)
+# Un tour de conversation peut enchaîner jusqu'à trois appels au modèle, et
+# sur CPU chacun prend des dizaines de secondes : timeout par appel généreux.
+OLLAMA_ASSISTANT_TIMEOUT = float(os.environ.get("OLLAMA_ASSISTANT_TIMEOUT", "120"))

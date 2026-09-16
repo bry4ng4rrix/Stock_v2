@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/layout/sidebar';
 import { TopBar } from '@/components/layout/topbar';
 import { djangoClient } from '@/lib/django-client';
 import { DataSyncProvider } from '@/lib/contexts/DataSyncContext';
+import { AssistantBubble } from '@/components/assistant-bubble';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -26,6 +27,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             {children}
           </main>
         </div>
+        <AssistantBubble />
       </div>
     </DataSyncProvider>
   );

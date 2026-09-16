@@ -32,6 +32,7 @@ from decimal import Decimal, InvalidOperation
 from .models import CustomUser, Product, ProductVariant, MagasinProfile, Sale, Ticket, EmployerProfile, AdminProfile, Movement, CaisseSession, CaisseMovement, ChatMessage, Notification, Subscription, LoginEvent, PlatformRequest, Device, SubscriptionOffer, EmployeePasswordResetRequest
 from .serializers import RegisterSerializer, ProductSerializer, SaleSerializer, TicketSerializer, MovementSerializer, CaisseSessionSerializer, CaisseMovementSerializer, NotificationSerializer, MagasinProfileSerializer, ChatMessageSerializer, CompanySubscriptionSerializer, LoginEventSerializer, PlatformRequestSerializer, DeviceSerializer, SubscriptionOfferSerializer, EmployeePasswordResetRequestSerializer
 from .permissions import IsAdmin, IsPlatformOwner, IsCompanyOwner
+from .ai_matching import MatchBudget, find_destination_product
 from .subscriptions import get_company_magasins, get_company_user_ids, get_company_devices, get_subscription_owner, get_subscription, get_device_limit_info, parse_device_name
 from rest_framework_simplejwt.views import TokenViewBase
 from .authentication import CustomTokenObtainPairSerializer
@@ -3149,6 +3150,68 @@ class TransferProductsView(APIView):
             counter += 1
         return candidate
 
+    def _match_entry(self, source_product, dest_product, match_info, quantity, variant_label=None):
+        """Ligne de rapport décrivant comment un produit a été rapproché."""
+        info = match_info or {}
+        strategy = info.get("strategy", "none")
+        entry = {
+            "source_product_id": source_product.id,
+            "product_name": source_product.name,
+            "destination_product_id": dest_product.id,
+            "quantity": quantity,
+            "merged": strategy in ("exact", "ai"),
+            "strategy": strategy,
+            "reason": info.get("reason", ""),
+        }
+        if strategy == "ai":
+            entry["confidence"] = round(float(info.get("confidence") or 0.0), 2)
+        if variant_label:
+            entry["variant_label"] = variant_label
+        return entry
+
+    def _resolve_destination(self, product, dest_magasin, budget, cache):
+        """Fiche de destination pour ce produit, mémorisée le temps de l'appel.
+
+        Un produit à plusieurs variantes traverse la boucle une fois par
+        variante. Sans mémorisation le modèle serait réinterrogé à chaque tour
+        et pourrait désigner deux fiches différentes d'un tour à l'autre, ce
+        qui éparpillerait les variantes d'un même article sur deux fiches.
+        """
+        if product.id not in cache:
+            cache[product.id] = find_destination_product(product, dest_magasin, budget=budget)
+        return cache[product.id]
+
+    def _merge_variants(self, source_product, dest_product):
+        """Reporte les variantes de la fiche source sur la fiche destination.
+
+        Retourne True si la fiche source portait des variantes. Les variantes de
+        même taille/couleur sont cumulées, les autres recréées à l'identique.
+        Les variantes source sont vidées mais jamais supprimées : les ventes
+        passées y sont rattachées (`Sale.variant`), et une suppression effacerait
+        la taille/couleur de l'historique.
+        """
+        variants = list(ProductVariant.objects.filter(product=source_product))
+        if not variants:
+            return False
+        for variant in variants:
+            moved = int(variant.quantity or 0)
+            if moved <= 0:
+                continue
+            dest_variant = _find_matching_variant(dest_product, variant.size, variant.color)
+            if dest_variant:
+                dest_variant.quantity = int(dest_variant.quantity or 0) + moved
+                dest_variant.save()
+            else:
+                ProductVariant.objects.create(
+                    product=dest_product,
+                    size=variant.size,
+                    color=variant.color,
+                    quantity=moved,
+                )
+            variant.quantity = 0
+            variant.save(update_fields=["quantity"])
+        return True
+
     def _normalize_items(self, request):
         items = request.data.get("items")
         if isinstance(items, list) and len(items) > 0:
@@ -3183,6 +3246,11 @@ class TransferProductsView(APIView):
         # plusieurs produits/variantes en une fois) — permet au client de
         # regrouper les lignes d'un même transfert à l'affichage.
         transfer_batch = uuid.uuid4()
+        # Budget de temps partagé par tous les appels au modèle de ce transfert,
+        # et journal des rapprochements pour restitution au client.
+        match_budget = MatchBudget()
+        match_report = []
+        match_cache = {}
 
         try:
           with transaction.atomic():
@@ -3242,13 +3310,9 @@ class TransferProductsView(APIView):
                         note=f"{transfer_note} (sortie partielle)",
                     )
 
-                    # Match on name AND description: two products can share a
-                    # generic name (e.g. "Abaya", "CHAUSSURE ADULTE") while
-                    # being genuinely different items — matching by name alone
-                    # silently merged unrelated products' stock on transfer.
-                    dest_product = Product.objects.filter(
-                        magasin=dest_magasin, name=product.name, description=product.description
-                    ).first()
+                    dest_product, match_info = self._resolve_destination(
+                        product, dest_magasin, match_budget, match_cache
+                    )
                     if not dest_product:
                         dest_product = Product.objects.create(
                             name=product.name,
@@ -3264,6 +3328,13 @@ class TransferProductsView(APIView):
                             expiry_date=product.expiry_date,
                             magasin=dest_magasin,
                         )
+                        match_info = {"strategy": "created", "confidence": 0.0, "reason": "nouvelle_fiche"}
+                        # Les variantes suivantes du même produit doivent
+                        # atterrir sur cette fiche, pas en créer une autre.
+                        match_cache[product.id] = (dest_product, match_info)
+                    match_report.append(
+                        self._match_entry(product, dest_product, match_info, quantity, variant_label)
+                    )
                     dest_previous = int(dest_product.initial_quantity or 0)
 
                     dest_variant = _find_matching_variant(dest_product, variant.size, variant.color)
@@ -3311,20 +3382,85 @@ class TransferProductsView(APIView):
                 transferred_summary.append(f"{product.name} x{quantity}")
 
                 if quantity == stock:
-                    product.magasin = dest_magasin
-                    product.save()
+                    # Cas le plus courant, et celui qui produisait le plus de
+                    # doublons : si la destination possède déjà cette fiche, on
+                    # additionne les quantités au lieu d'y déplacer une seconde
+                    # fiche identique.
+                    dest_product, match_info = self._resolve_destination(
+                        product, dest_magasin, match_budget, match_cache
+                    )
+
+                    if dest_product is None:
+                        product.magasin = dest_magasin
+                        product.save()
+                        match_report.append(
+                            self._match_entry(
+                                product,
+                                product,
+                                {"strategy": "moved", "reason": "aucune_fiche_equivalente"},
+                                quantity,
+                            )
+                        )
+                        Movement.objects.create(
+                            product=product,
+                            product_name=product.name,
+                            magasin=dest_magasin,
+                            source_magasin=source_magasin,
+                            destination_magasin=dest_magasin,
+                            transfer_batch=transfer_batch,
+                            changed_by=user,
+                            previous_quantity=stock,
+                            new_quantity=stock,
+                            change=0,
+                            note=transfer_note,
+                        )
+                        continue
+
+                    # Fusion. La fiche source est vidée et conservée : ses ventes
+                    # et ses mouvements la référencent en CASCADE, la supprimer
+                    # effacerait l'historique du magasin d'origine.
+                    dest_previous = int(dest_product.initial_quantity or 0)
+                    had_variants = self._merge_variants(product, dest_product)
+
+                    product.initial_quantity = 0
+                    product.save(update_fields=["initial_quantity"])
                     Movement.objects.create(
                         product=product,
                         product_name=product.name,
-                        magasin=dest_magasin,
+                        magasin=source_magasin,
                         source_magasin=source_magasin,
                         destination_magasin=dest_magasin,
                         transfer_batch=transfer_batch,
                         changed_by=user,
                         previous_quantity=stock,
-                        new_quantity=stock,
-                        change=0,
-                        note=transfer_note,
+                        new_quantity=0,
+                        change=-quantity,
+                        note=f"{transfer_note} (sortie, fusion avec la fiche existante)",
+                    )
+
+                    if had_variants:
+                        dest_product.initial_quantity = ProductVariant.objects.filter(
+                            product=dest_product
+                        ).aggregate(total=Sum("quantity"))["total"] or 0
+                    else:
+                        dest_product.initial_quantity = dest_previous + quantity
+                    dest_product.save(update_fields=["initial_quantity"])
+
+                    match_report.append(
+                        self._match_entry(product, dest_product, match_info, quantity)
+                    )
+                    Movement.objects.create(
+                        product=dest_product,
+                        product_name=dest_product.name,
+                        magasin=dest_magasin,
+                        source_magasin=source_magasin,
+                        destination_magasin=dest_magasin,
+                        transfer_batch=transfer_batch,
+                        changed_by=user,
+                        previous_quantity=dest_previous,
+                        new_quantity=dest_product.initial_quantity,
+                        change=quantity,
+                        note=f"{transfer_note} (entrée, fusion avec la fiche existante)",
                     )
                     continue
 
@@ -3345,13 +3481,9 @@ class TransferProductsView(APIView):
                     note=f"{transfer_note} (sortie partielle)",
                 )
 
-                # Match on name AND description: two products can share a
-                # generic name (e.g. "Abaya", "CHAUSSURE ADULTE") while being
-                # genuinely different items — matching by name alone silently
-                # merged unrelated products' stock together on transfer.
-                dest_product = Product.objects.filter(
-                    magasin=dest_magasin, name=product.name, description=product.description
-                ).first()
+                dest_product, match_info = self._resolve_destination(
+                    product, dest_magasin, match_budget, match_cache
+                )
                 if dest_product:
                     dest_previous = int(dest_product.initial_quantity or 0)
                     dest_product.initial_quantity = dest_previous + quantity
@@ -3372,6 +3504,10 @@ class TransferProductsView(APIView):
                         magasin=dest_magasin,
                     )
                     dest_previous = 0
+                    match_info = {"strategy": "created", "confidence": 0.0, "reason": "nouvelle_fiche"}
+                    match_cache[product.id] = (dest_product, match_info)
+
+                match_report.append(self._match_entry(product, dest_product, match_info, quantity))
 
                 Movement.objects.create(
                     product=dest_product,
@@ -3407,7 +3543,13 @@ class TransferProductsView(APIView):
                 user=user,
             )
 
-        return Response({"message": "Transfert effectué avec succès"})
+        return Response({
+            "message": "Transfert effectué avec succès",
+            "transfer_batch": str(transfer_batch),
+            "matches": match_report,
+            "merged_count": sum(1 for entry in match_report if entry["merged"]),
+            "created_count": sum(1 for entry in match_report if entry["strategy"] == "created"),
+        })
 
 
 class BackupExportView(APIView):

@@ -9,6 +9,163 @@ changement d'API, la plus récente en haut.
 
 ---
 
+## 2026-09-16 — Assistant conversationnel (Ollama) : chat + exécution confirmée
+
+Deux nouveaux endpoints, réservés aux utilisateurs authentifiés (tous rôles
+sauf `platform_admin`, qui n'a pas de magasin). Ils alimentent la bulle
+d'assistant en bas à droite — déjà implémentée dans `valhery_wear`
+(`lib/features/assistant/`, `lib/state/assistant_provider.dart`,
+`lib/data/repositories/assistant_repository.dart`).
+
+### `POST /api/users/assistant/chat/`
+
+Requête — le backend est sans état, le client renvoie tout l'historique
+(20 derniers tours conservés côté serveur) :
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "combien de Strasse en stock ?"},
+    {"role": "assistant", "content": "…"},
+    {"role": "user", "content": "ajoute 5 unités reçues ce matin"}
+  ],
+  "magasin_id": 3
+}
+```
+
+`magasin_id` est optionnel : magasin consulté, utilisé par défaut par
+l'assistant. Le dernier message doit être `role: "user"` (sinon 400).
+
+Réponse :
+
+```json
+{
+  "reply": "Voici ce que je propose :\n- Ajouter 5 unité(s) à « Strasse » dans Boutique A : stock 14 → 19. Motif : réception.\n\nConfirmez pour que j'exécute. L'opération sera enregistrée dans les mouvements.",
+  "actions": [
+    {"tool": "search_products", "arguments": {"query": "strasse"}, "result": {"total": 1, "produits": [ … ]}}
+  ],
+  "pending_actions": [
+    {"tool": "adjust_stock", "description": "Ajouter 5 unité(s) à « Strasse » …", "token": "eyJ1Ijo…"}
+  ]
+}
+```
+
+- `actions` : outils de lecture exécutés pendant le tour (traçabilité).
+- `pending_actions` : actions de modification **non exécutées**, à
+  confirmer. Le client affiche `description` avec Confirmer / Annuler.
+- `503 {"error": "…"}` si Ollama est injoignable ou `AI_ASSISTANT_ENABLED=False`.
+- Latence : 30 à 90 s par tour sur le CPU du VPS. Prévoir un timeout client
+  long (Flutter : 4 min sur ces deux appels) et un indicateur d'attente.
+
+### `POST /api/users/assistant/execute/`
+
+Requête : `{"token": "<token d'une pending_action>"}`.
+
+Réponse `200` :
+
+```json
+{
+  "tool": "adjust_stock",
+  "description": "Ajouter 5 unité(s) à « Strasse » …",
+  "result": {"produit": "Strasse", "stock_avant": 14, "stock_apres": 19, "movement_id": 812}
+}
+```
+
+`400 {"error": "…"}` si le jeton est expiré (15 min), falsifié, émis pour un
+autre utilisateur, si le rôle ne permet plus l'action, ou si l'état a changé
+entre-temps (ex. stock devenu insuffisant — la prévisualisation est rejouée
+avant exécution).
+
+Chaque exécution crée un `Movement` (note préfixée « Assistant IA — »,
+`changed_by` = l'utilisateur), donc visible dans `GET /api/users/movements/`
+sans changement de contrat. Un transfert via l'assistant passe par la logique
+de `transfer/products/` (fusion des fiches identiques comprise).
+
+### Outils disponibles selon le rôle
+
+| Outil | admin | magasin | employer |
+|---|---|---|---|
+| lecture (`list_magasins`, `search_products`, `get_product`, `low_stock_products`, `stock_summary`, `sales_summary`, `recent_movements`) | ✓ | ✓ (son magasin) | ✓ (son magasin) |
+| `adjust_stock`, `update_prices` | ✓ | ✓ | — |
+| `transfer_product` | ✓ | — | — |
+
+---
+
+## 2026-09-10 — Fusion des fiches produit identiques lors d'un transfert
+
+Le backend rapproche désormais le produit transféré des fiches déjà présentes
+dans le magasin de destination et **additionne les quantités** au lieu de créer
+un doublon. Le rapprochement est déterministe (prix identiques, puis nom et
+référence normalisés) et, en cas d'échec, assisté par un modèle Ollama qui ne
+peut que proposer un candidat déjà filtré sur le prix. Aucune migration.
+
+### `POST /api/users/transfer/products/` (réponse étendue, pas cassant)
+
+La requête est inchangée. La réponse contenait uniquement `message` ; elle
+contient maintenant :
+
+```json
+{
+  "message": "Transfert effectué avec succès",
+  "transfer_batch": "3f2b...-uuid",
+  "merged_count": 1,
+  "created_count": 1,
+  "matches": [
+    {
+      "source_product_id": 42,
+      "product_name": "Strasse",
+      "destination_product_id": 87,
+      "quantity": 5,
+      "merged": true,
+      "strategy": "ai",
+      "confidence": 0.93,
+      "reason": "nom et référence identiques à la casse près",
+      "variant_label": "38/Rouge"
+    }
+  ]
+}
+```
+
+- `strategy` vaut `exact` (nom + référence identiques), `ai` (rapprochement
+  proposé par le modèle), `created` (nouvelle fiche créée à destination),
+  `moved` (fiche déplacée telle quelle, transfert total sans équivalent) ou
+  `none`.
+- `merged` vaut `true` uniquement pour `exact` et `ai`.
+- `confidence` n'est présent que pour `strategy: "ai"`.
+- `variant_label` n'est présent que pour un transfert de variante.
+- `transfer_batch` est l'UUID déjà porté par les `Movement` du transfert : il
+  permet de regrouper les lignes d'un même transfert à l'affichage.
+
+Un client existant qui ne lit que `message` continue de fonctionner.
+
+### Changements de comportement à connaître côté mobile
+
+- **Prix éliminatoire.** Deux fiches au même nom mais avec un prix d'achat ou
+  un prix de vente différent ne fusionnent plus jamais. Auparavant le
+  rapprochement se faisait sur le nom exact seul, prix ignoré.
+- **Transfert total.** Si la destination possède déjà une fiche équivalente, la
+  fiche d'origine n'est plus déplacée : elle est vidée (quantité 0) et
+  conservée dans le magasin source, et la fiche de destination est créditée.
+  La fiche source garde donc ses ventes et ses mouvements. Un écran mobile qui
+  listait les produits d'un magasin verra apparaître des fiches à 0 dans le
+  magasin d'origine.
+- **Deux mouvements au lieu d'un.** Un transfert total produisait un seul
+  `Movement` à `change: 0` ; en cas de fusion il en produit deux (sortie
+  `-quantité` côté source, entrée `+quantité` côté destination), avec les notes
+  « (sortie, fusion avec la fiche existante) » et « (entrée, fusion avec la
+  fiche existante) ».
+
+### Côté Flutter (déjà appliqué dans `valhery_wear`)
+
+- `lib/features/sales/widgets/product_picker_dialog.dart` : chaque ligne
+  affiche la description (2 lignes max) et le résumé des variantes
+  (`38 / Rouge (5) · 40 / Noir (2)`) ; la recherche porte aussi sur la
+  description, la marque et les variantes.
+- `lib/features/sales/widgets/pos_tab.dart` : la description est rappelée dans
+  le dialog de choix de variante et sur chaque ligne du panier.
+
+---
+
 ## 2026-08-06 — Heures d'ouverture/fermeture de caisse personnalisables
 
 Migration `0018_alter_caissesession_opened_at` : `CaisseSession.opened_at`

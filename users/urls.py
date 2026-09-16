@@ -1,6 +1,7 @@
 from django.urls import path
 
 # Import view classes and viewsets
+from .assistant import AssistantChatView, AssistantExecuteView
 from .views import (
     AddAdminView,
     RegisterView,
@@ -113,6 +114,9 @@ urlpatterns = [
     path("pending/", PendingUsersView.as_view()),
     # Transfer products between stores
     path("transfer/products/", TransferProductsView.as_view()),
+    # Assistant conversationnel (Ollama) : chat + exécution confirmée d'une action
+    path("assistant/chat/", AssistantChatView.as_view()),
+    path("assistant/execute/", AssistantExecuteView.as_view()),
     # Backup: export/import full database + media (admin only)
     path("backup/export/", BackupExportView.as_view()),
     path("backup/import/", BackupImportView.as_view()),

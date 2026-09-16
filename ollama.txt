@@ -1,0 +1,184 @@
+PASSATION — INTÉGRATION OLLAMA DANS STOCK_V2
+=============================================
+Ce fichier sert à reprendre le travail depuis une session Claude Code lancée
+SUR LE VPS (garrix@157.173.103.147, projet dans ~/Stock_v2). Il résume ce qui
+a été construit en local, ce qui reste à faire sur le serveur, et les pièges
+connus. À lire en entier avant d'agir. Tout ce qui est décrit est commité sur
+la branche main (voir "Étape 0" pour le push si ce n'est pas encore fait).
+
+Contexte : Ollama tourne sur l'hôte du VPS (service systemd, User=ollama,
+modèles qwen3:4b et qwen2.5:0.5b, CPU uniquement, 7,8 Go de RAM). Le backend
+Django tourne dans Docker (docker compose, service `backend`, code monté en
+volume `.:/app`). Un Ollama tourne aussi sur le PC de développement mais
+l'utilisateur a demandé de NE PAS tester dessus : la cible est le VPS.
+
+
+1. CE QUI A ÉTÉ CONSTRUIT
+-------------------------
+
+A) Fusion des fiches produit identiques lors d'un transfert
+   - users/ai_matching.py : rapprochement déterministe (prix identiques
+     ÉLIMINATOIRE, puis nom + référence + description normalisés) et, en
+     repli, appel Ollama (/api/chat, format JSON schema, think:false) qui ne
+     peut désigner qu'un candidat déjà filtré sur le prix.
+   - users/views.py, TransferProductsView : les trois points de recherche de
+     la fiche destination passent par find_destination_product (mémorisée
+     par produit dans l'appel). Le transfert TOTAL fusionne désormais au lieu
+     de déplacer une fiche en doublon ; la fiche source est vidée, jamais
+     supprimée (Sale/Movement en CASCADE).
+   - Réponse de POST /api/users/transfer/products/ enrichie : transfer_batch,
+     matches[], merged_count, created_count (voir modifhistory.md).
+   - Tests : users/tests_transfer_merge.py (8 tests, IA désactivée).
+
+B) Assistant conversationnel (bulle en bas à droite, web + mobile)
+   - users/assistant.py : boucle agent bornée (3 appels modèle max), outils
+     de lecture (list_magasins, search_products, get_product,
+     low_stock_products, stock_summary, sales_summary, recent_movements) et
+     outils de modification (adjust_stock, update_prices, transfer_product).
+     RÈGLE : une modification n'est JAMAIS exécutée par le modèle. Le backend
+     renvoie une "pending_action" (description + jeton signé
+     django.core.signing, 15 min) ; le client affiche Confirmer ; puis
+     POST assistant/execute/ avec le jeton. Chaque action confirmée crée un
+     Movement (note préfixée "Assistant IA").
+   - Endpoints : POST /api/users/assistant/chat/ et
+     POST /api/users/assistant/execute/ (users/urls.py).
+   - Périmètre = même règles que les vues REST (admin : magasins de la
+     société ; gérant : son magasin ; employé : son magasin, lecture seule).
+   - Frontend Next.js : components/assistant-bubble.tsx monté dans
+     app/(app)/layout.tsx ; client dans lib/django-client.ts (assistant.chat,
+     assistant.execute). Conversation en sessionStorage.
+   - Flutter (valhery_wear) : lib/data/repositories/assistant_repository.dart,
+     lib/state/assistant_provider.dart, lib/features/assistant/assistant_bubble.dart,
+     monté dans lib/widgets/navigation_shell.dart (Stack + FAB). Timeout Dio
+     dédié de 4 min sur ces deux appels.
+   - Tests : users/tests_assistant.py (11 tests, modèle simulé).
+
+C) Configuration
+   - Stock/settings.py : OLLAMA_URL (défaut http://172.17.0.1:11434),
+     OLLAMA_MODEL, OLLAMA_TIMEOUT, AI_PRODUCT_MATCHING_ENABLED,
+     AI_MATCH_MIN_CONFIDENCE, AI_MATCH_MAX_CANDIDATES, AI_MATCH_TIME_BUDGET,
+     AI_ASSISTANT_ENABLED, OLLAMA_ASSISTANT_MODEL, OLLAMA_ASSISTANT_TIMEOUT.
+   - docker-compose.yml / docker-compose.prod.yml : mêmes variables exposées
+     au service backend.
+   - Aucune migration de base n'a été ajoutée.
+
+
+2. À FAIRE SUR LE VPS, DANS L'ORDRE
+-----------------------------------
+
+Étape 0 — s'assurer que le code est bien arrivé
+    cd ~/Stock_v2 && git fetch && git status -sb && git log --oneline -3
+    Si le commit "assistant Ollama" n'est pas là : il n'a pas été poussé
+    depuis le PC ; demander à l'utilisateur de faire git push, puis git pull.
+
+Étape 1 — exposer Ollama aux conteneurs (sudo, décrit dans instructions.md)
+    Drop-in systemd : OLLAMA_HOST=172.17.0.1:11434 et OLLAMA_KEEP_ALIVE=30m.
+    NE PAS mettre 0.0.0.0 : aucun pare-feu actif, le port serait public.
+    Vérifier : ss -tln | grep 11434  → 172.17.0.1:11434
+
+Étape 2 — recréer le backend et vérifier l'accès depuis le conteneur
+    docker compose config -q && docker compose up -d backend
+    docker compose exec -T backend python -c "
+    import json; from urllib.request import urlopen
+    print([m['name'] for m in json.loads(urlopen('http://172.17.0.1:11434/api/tags', timeout=15).read())['models']])"
+
+Étape 3 — tests automatisés (sans Ollama, modèle simulé)
+    docker compose exec -T backend python manage.py test users.tests_transfer_merge users.tests_assistant
+    Attendu : 19 tests OK.
+
+Étape 4 — VALIDER LE PROMPT DE RAPPROCHEMENT CONTRE LE VRAI MODÈLE
+    C'est le point le plus important : la première version du prompt a été
+    testée sur le PC (même modèle qwen3:4b) et le modèle s'est montré TROP
+    STRICT — il refusait « AB-200 » = « AB 200 » et « Boubou coton » =
+    « boubou en coton ». Le prompt a été réécrit avec des exemples explicites
+    (À IGNORER / À NE PAS IGNORER) mais cette nouvelle version N'A PAS ENCORE
+    ÉTÉ TESTÉE contre le modèle. Le faire ici :
+
+    docker compose exec -T backend python -c "
+    import django; django.setup()
+    from types import SimpleNamespace
+    from users.ai_matching import ai_match
+    def f(i, nom, ref, desc='', taille=''):
+        return SimpleNamespace(id=i, name=nom, reference=ref, description=desc, brand='', category='Vetements', taille=taille, couleur='')
+    cas = [
+      ('casse/accents/espaces', f(0,'Élégance Été','AB-200','Robe longue a strass'), [f(11,'elegance ete','AB 200','robe longue à strass'), f(12,'Kimono','KIM-300','Kimono en soie')], 11),
+      ('articles differents',   f(0,'Strasse','AB-200','Robe a strass'), [f(11,'Kimono','KIM-300','Kimono'), f(12,'Crocs','CR-1','Sabot')], None),
+      ('taille differente',     f(0,'Robe bustier','RB-10','Robe',taille='38'), [f(11,'Robe bustier','RB-10','Robe',taille='42')], None),
+      ('description reformulee',f(0,'boubou','AB-180','Boubou coton'), [f(11,'Boubou','AB-180','boubou en coton')], 11),
+    ]
+    for titre, s, c, attendu in cas:
+        p, conf, raison = ai_match(s, c, timeout=240)
+        got = p.id if p else None
+        print('OK ' if got==attendu else 'KO ', titre, '->', got, 'attendu', attendu, '| conf', conf, '|', raison)
+    "
+    Objectif : 4 OK. Si les cas positifs échouent encore, ajuster
+    _SYSTEM_PROMPT dans users/ai_matching.py (ajouter des exemples, ou
+    baisser AI_MATCH_MIN_CONFIDENCE), et re-tester. Noter aussi la LATENCE
+    de chaque appel : sur le PC de dev c'était 28 à 125 s par appel, bien
+    au-dessus de OLLAMA_TIMEOUT=20. Sur le VPS, mesurer et régler
+    OLLAMA_TIMEOUT / AI_MATCH_TIME_BUDGET en conséquence (variables
+    d'environnement du service backend). Si c'est trop lent, essayer
+    OLLAMA_MODEL=qwen2.5:0.5b pour le rapprochement seulement.
+
+Étape 5 — tester l'assistant de bout en bout
+    a) Obtenir un jeton : POST /api/users/login/ {email, password} → access.
+    b) Question de lecture :
+       curl -s -X POST http://127.0.0.1:8000/api/users/assistant/chat/ \
+         -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+         -d '{"messages":[{"role":"user","content":"quels produits sont en alerte de stock ?"}]}'
+       Vérifier que "actions" contient un appel d'outil et que "reply" est en
+       français, sans chiffre inventé.
+    c) Action :
+       -d '{"messages":[{"role":"user","content":"ajoute 2 unités au produit <nom> reçues ce matin"}]}'
+       → "pending_actions" non vide, stock inchangé. Puis :
+       curl -s -X POST .../assistant/execute/ -d '{"token":"<token>"}'
+       → stock modifié, un Movement avec note "Assistant IA — ..." visible
+       dans l'écran Mouvements.
+    d) Mesurer la latence d'un tour complet. Si > 90 s régulièrement :
+       - OLLAMA_ASSISTANT_TIMEOUT à la hausse (env backend),
+       - ou OLLAMA_ASSISTANT_MODEL=qwen2.5:0.5b (supporte les tools, beaucoup
+         plus rapide, moins fiable sur la compréhension),
+       - ou réduire le nombre d'outils exposés (le prompt système + les
+         schémas d'outils pèsent dans le temps de traitement du prompt).
+    Surveiller : docker logs -f stock_backend | grep -i "assistant\|ollama"
+
+Étape 6 — frontends
+    Web : docker compose up -d --build frontend (ou le flux habituel) ; la
+    bulle apparaît en bas à droite sur toutes les pages une fois connecté.
+    Mobile : build de valhery_wear côté PC (flutter build apk), hors VPS.
+
+
+3. PIÈGES CONNUS
+----------------
+- 127.0.0.1 dans un conteneur = le conteneur. Ollama doit écouter sur
+  172.17.0.1 (docker0) ; c'est le sens du drop-in systemd.
+- Après le drop-in, la CLI `ollama` de l'hôte a besoin de
+  OLLAMA_HOST=172.17.0.1:11434 (ajouté à /etc/environment par instructions.md).
+- qwen3 "réfléchit" par défaut : think:false est envoyé, avec repli sans le
+  champ si le modèle ne le supporte pas (HTTP 400).
+- Le premier appel après inactivité recharge le modèle (2,5 Go) : d'où
+  OLLAMA_KEEP_ALIVE=30m.
+- Un déploiement concurrent (`docker compose up -d --build` depuis un autre
+  terminal) a déjà provoqué des conteneurs "Dead" pendant une intervention :
+  vérifier `ps aux | grep "docker compose"` avant de toucher aux conteneurs.
+- La suite de tests historique users/tests.py a 2 à 5 échecs PRÉ-EXISTANTS
+  (add-admin 403, upload de logo), instables d'un run à l'autre, sans rapport
+  avec ces changements. Ne pas chercher à les corriger dans ce cadre.
+- Les .pyc de __pycache__ sont suivis par git dans ce dépôt : ne pas les
+  ajouter aux commits.
+
+
+4. FICHIERS À CONNAÎTRE
+-----------------------
+  users/ai_matching.py          rapprochement produits (déterministe + IA)
+  users/assistant.py            assistant : outils, boucle, confirmation, vues
+  users/views.py                TransferProductsView (fusion), ~l.3130-3560
+  users/urls.py                 routes assistant/chat/ et assistant/execute/
+  users/tests_transfer_merge.py users/tests_assistant.py
+  Stock/settings.py             bloc OLLAMA / IA en fin de fichier
+  docker-compose*.yml           variables d'environnement du backend
+  instructions.md               procédure VPS détaillée (sudo, compose, tests)
+  modifhistory.md               contrats d'API modifiés (pour le Flutter)
+  memory.md                     journal complet des sessions
+  frontend/components/assistant-bubble.tsx
+  valhery_wear/lib/features/assistant/assistant_bubble.dart

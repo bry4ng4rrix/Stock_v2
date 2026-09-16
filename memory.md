@@ -6,6 +6,228 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-09-16 — Pull avec conflits résolus + assistant conversationnel Ollama (web + Flutter)
+
+**Prompts utilisateur :**
+> fait un git fetch et un git pull en validant tous les paramètres et vérifier
+> s'il y a des conflits
+
+> je veux une bulle de discussion rattachée en bas à droite pour un assistant,
+> en utilisant ollama dans l'app pour toutes les fonctionnalités de l'app, et
+> je veux aussi qu'il puisse faire des tâches et que ce soit tout enregistré
+> dans les mouvements ; faire la configuration de l'ollama ; ne pas tester
+> d'abord sur mon PC car l'ollama est dans le VPS ; donner un fichier
+> ollama.txt pour que je puisse continuer la conversation dans le VPS ; le
+> cross-plateforme est dans /home/garrix/AndroidStudioProjects/valhery_wear
+
+**Modifications apportées :**
+
+- **Pull.** `main` était 4 commits derrière `origin/main` (pagination front,
+  `_find_matching_variant`, rapprochement `name + description` dans
+  `TransferProductsView`), 0 commit local. Fast-forward après `git stash` ;
+  2 conflits dans `users/views.py`, exactement sur les lignes que je venais de
+  remplacer par `_resolve_destination`. Résolution : ma version est gardée
+  (elle englobe le cas upstream), et l'intention du commit entrant est
+  intégrée plutôt qu'écrasée — la **description entre dans le rapprochement
+  déterministe** (`deterministic_match` dans `ai_matching.py`) et
+  `_merge_variants` adopte `_find_matching_variant` (insensible à la casse).
+  Tests transferts : 8/8 après résolution.
+
+- **`users/assistant.py` (nouveau)** — assistant Ollama avec appel d'outils.
+  - Boucle agent bornée à 3 appels modèle (sur CPU chaque appel coûte des
+    dizaines de secondes). Outils de lecture exécutés librement mais toujours
+    dans le périmètre de l'utilisateur (`accessible_magasins`, mêmes règles
+    que les vues REST). Outils de modification **jamais exécutés par le
+    modèle** : la boucle s'arrête et renvoie une `pending_action`
+    (description lisible + jeton `django.core.signing`, salt dédié, 15 min,
+    lié à l'id utilisateur). Le client affiche Confirmer, puis appelle
+    `execute/`. À l'exécution la prévisualisation est **rejouée** (le stock a
+    pu bouger entre-temps) avant d'écrire.
+  - Le texte de confirmation est formulé côté Python, pas par un nouveau
+    passage du modèle : économise 30 à 60 s par action.
+  - Chaque action crée un `Movement` (note « Assistant IA — … »,
+    `changed_by` = utilisateur). `update_prices` remplit les champs
+    `previous_/new_shell_price` et `unit_price` comme `ProductViewSet` ;
+    `transfer_product` réutilise `TransferProductsView.post()` avec un
+    `SimpleNamespace(user, data)` — la vue ne lit que ces deux attributs, et
+    on hérite ainsi de la fusion des fiches et des mouvements de transfert.
+  - Rôles : lecture pour tous ; `adjust_stock`/`update_prices` admin et
+    gérant ; `transfer_product` admin seul ; l'employé n'a pas les outils de
+    modification dans la liste envoyée au modèle **et** `execute/` le refuse
+    même avec un jeton valide (double verrou).
+  - Routes `assistant/chat/` et `assistant/execute/`. Tests
+    `users/tests_assistant.py` : 11 tests, `_call_model` simulé — conformément
+    à la consigne de ne pas tester Ollama sur le PC.
+
+- **Frontend Next.js** : `components/assistant-bubble.tsx` monté dans
+  `app/(app)/layout.tsx`, bouton fixe bas-droite, panneau 400×560,
+  conversation en `sessionStorage`, boutons Confirmer/Annuler sous les
+  actions, événement `assistant:action-executed` pour que les pages
+  rafraîchissent. Client : `djangoClient.assistant.chat/execute` + types.
+  `tsc` : aucune erreur sur ces fichiers (l'erreur `stores` dans
+  `django-client.ts` est pré-existante).
+
+- **Flutter `valhery_wear`** : `assistant_repository.dart` (timeout Dio dédié
+  4 min, le global de 30 s est insuffisant), `assistant_provider.dart`
+  (Notifier Riverpod au niveau app pour survivre à la navigation),
+  `features/assistant/assistant_bubble.dart` (FAB + panneau : bottom sheet
+  sur mobile, carte ancrée bas-droite sur desktop), monté dans
+  `navigation_shell.dart` via un `Stack` dans les deux layouts.
+  `flutter analyze` : aucun problème.
+
+- **Config** : `AI_ASSISTANT_ENABLED`, `OLLAMA_ASSISTANT_MODEL`,
+  `OLLAMA_ASSISTANT_TIMEOUT` dans settings + les deux compose.
+
+- **Documents** : `ollama.txt` (passation pour une session Claude Code sur le
+  VPS : état, ordre des étapes, pièges), `instructions.md` complété
+  (assistant, 19 tests), `modifhistory.md` (contrat des deux endpoints).
+
+**Point ouvert important :** la première version du prompt de rapprochement
+(`ai_matching.py`) a été testée sur le PC contre le même `qwen3:4b` — les cas
+négatifs passaient, les positifs échouaient (modèle trop strict sur
+« AB-200 » vs « AB 200 »), avec 28 à 125 s par appel. Le prompt a été réécrit
+avec des exemples explicites mais **cette version n'a pas encore été validée
+contre le modèle** (consigne : tester sur le VPS). C'est l'étape 4 de
+`ollama.txt`. Les timeouts (20 s rapprochement) devront sans doute être
+relevés d'après la latence mesurée sur le VPS.
+
+---
+
+## 2026-09-10 (suite) — Fusion des produits identiques au transfert via Ollama + description/variantes dans l'app Flutter
+
+**Prompts utilisateur :**
+> dans la vps integre ollama pour le transfert des produits, pour qu'il examine
+> ce qui est identique : meme nom, reference, descriptions, prix, sont additione
+
+> sur la dialog de vente dans le flutter /home/garrix/AndroidStudioProjects/valhery_wear,
+> ajouter un descriptions pour connaitre la description du vent et pour bien
+> identifier le produit — et les variant
+
+**Contexte :** la capture envoyée montrait le symptôme — « Strasse / AB-200 /
+200 000 Ar » et « boubou / AB-180 / 180 000 Ar » apparaissaient chacun deux
+fois dans le sélecteur de produit, avec des stocks distincts. Ce sont des
+doublons créés par les transferts entre magasins.
+
+**Modifications apportées :**
+
+- Nouveau module `users/ai_matching.py` : rapprochement de fiches produit.
+  L'architecture est volontairement défensive — l'IA ne peut que *proposer* un
+  candidat dans une liste déjà filtrée par des règles déterministes, et sa
+  réponse est revalidée en Python avant toute fusion (id présent dans la liste
+  soumise, seuil de confiance, prix re-vérifié). Si Ollama est absent, lent ou
+  incohérent, on retombe silencieusement sur le rapprochement déterministe : un
+  transfert ne doit jamais échouer à cause du moteur d'inférence.
+  - Le **prix est éliminatoire** (décision utilisateur explicite : « ne pas
+    fusionner ce qui n'est pas même prix »). Il sert aussi de préfiltre SQL des
+    candidats, ce qui raccourcit le prompt et rend tout faux positif tarifaire
+    structurellement impossible — le modèle ne voit jamais une fiche à un autre
+    prix. `unit_price` (achat) et `shell_price` (vente) doivent tous deux
+    coïncider.
+  - Normalisation avant comparaison : casse, accents, ponctuation, et surtout
+    les suffixes `-TR7` / `-TR7-1` que `_unique_reference` empile à chaque
+    transfert — sans cela le rapprochement échouait dès le deuxième saut.
+  - Appel Ollama en `urllib` stdlib, volontairement : ni `requests` ni `httpx`
+    n'est dans `requirements.txt`, et l'ajouter aurait imposé un rebuild
+    d'image pour une seule requête HTTP.
+  - `think: False` (qwen3 raisonne à voix haute par défaut, ce qui triple la
+    latence sans rien apporter ici), sortie contrainte par un schéma JSON,
+    `temperature: 0`. Repli automatique sans le champ `think` si le modèle
+    configuré ne le supporte pas.
+  - `MatchBudget` : budget de temps global par transfert (45 s par défaut),
+    pour qu'un lot de vingt produits ne puisse pas immobiliser la requête HTTP.
+
+- `users/views.py`, `TransferProductsView` : les trois points de recherche de la
+  fiche de destination passent par `find_destination_product` au lieu du
+  `filter(magasin=..., name=product.name).first()` d'origine.
+  - **Le cas du transfert total (`quantity == stock`) ne fusionnait pas du
+    tout** : il déplaçait la fiche vers la destination, ce qui produisait
+    mécaniquement un doublon quand la destination avait déjà l'article. C'est
+    le trajet le plus courant, et la cause principale des doublons observés sur
+    la capture. Il crédite maintenant la fiche existante.
+  - La fiche source est **vidée, jamais supprimée** : `Sale.product` et
+    `Movement.product` sont en `on_delete=CASCADE`, une suppression effacerait
+    les ventes et l'historique du magasin d'origine. Même raisonnement pour les
+    variantes source, mises à 0 plutôt que supprimées (`Sale.variant` y est
+    rattaché et porte la taille/couleur de l'historique).
+  - `_resolve_destination` mémorise la décision par produit le temps de
+    l'appel. Nécessaire pour la correction, pas seulement la performance : un
+    produit à plusieurs variantes traverse la boucle une fois par variante, et
+    sans mémorisation le modèle pouvait désigner deux fiches différentes d'un
+    tour à l'autre, éparpillant les variantes d'un même article.
+  - Réponse enrichie (`transfer_batch`, `matches`, `merged_count`,
+    `created_count`) — voir `modifhistory.md`.
+
+- `Stock/settings.py` + `docker-compose.yml` / `docker-compose.prod.yml` :
+  réglages `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT`,
+  `AI_PRODUCT_MATCHING_ENABLED`, `AI_MATCH_MIN_CONFIDENCE`,
+  `AI_MATCH_MAX_CANDIDATES`, `AI_MATCH_TIME_BUDGET`. Tout est coupable sans
+  redéploiement de code.
+
+- `instructions.md` (nouveau) : procédure VPS à exécuter par l'utilisateur.
+  Ollama n'écoute que sur `127.0.0.1`, qui depuis un conteneur désigne le
+  conteneur lui-même — il faut un drop-in systemd `OLLAMA_HOST=172.17.0.1:11434`
+  (passerelle docker0). **Pas `0.0.0.0`** : aucun pare-feu n'est actif sur ce
+  VPS, le port 11434 deviendrait public. `OLLAMA_KEEP_ALIVE=30m` évite de
+  recharger 2,5 Go à chaque transfert espacé.
+
+- App Flutter `valhery_wear` :
+  - `product_picker_dialog.dart` : chaque ligne affiche la description (2
+    lignes max) et le résumé des variantes (`38 / Rouge (5) · 40 / Noir (2)`).
+    La recherche porte aussi sur description, marque et variantes. C'est le
+    seul moyen de distinguer deux fiches qui partagent nom, référence et prix.
+  - `pos_tab.dart` : la description est rappelée dans le dialog « Choisir un
+    variant » (une fois le picker fermé, plus rien n'indiquait quelle fiche on
+    vendait) et sur chaque ligne du panier.
+  - `flutter analyze` : aucun problème sur l'ensemble du projet.
+
+**Limite assumée :** les doublons déjà présents en base ne sont pas fusionnés
+rétroactivement. Le changement empêche d'en créer de nouveaux ; le nettoyage de
+l'existant reste à faire (à la main ou via un script dédié, non demandé ici).
+
+---
+
+## 2026-09-10 — Déploiement VPS débloqué : migration merge `0021` appliquée
+
+**Prompt utilisateur :**
+> il y a un migrations merge dans ce fichier et lance dans le vps avec la
+> lancement dans le vps, voici le vps ssh garrix@157.173.103.147 et le mdp
+> est daika
+
+**Modifications apportées :**
+- Aucune modification de code : la migration de fusion existait déjà
+  (`users/migrations/0021_merge_20260910_1542.py`, commit `ba345c6`), elle
+  n'avait simplement jamais été appliquée sur le VPS. Session purement
+  opérationnelle (déploiement).
+- Diagnostic : le conteneur `stock_backend` était en `Exited (1)` avec un
+  crash-loop sur `CommandError: Conflicting migrations detected; multiple
+  leaf nodes in the migration graph: (0019_alter_movement_note_alter_movement_variant_label,
+  0020_movement_source_destination_transfer_batch in users)`. Le graphe avait
+  deux branches partant de `0018` :
+  - `0019_alter_movement_note_alter_movement_variant_label` (01/09)
+  - `0019_alter_sale_sold_at` → `0020_movement_source_destination_transfer_batch` (10/09)
+  `0021_merge_*` recolle les deux feuilles (opérations vides, dépendances
+  seules) — c'est bien la résolution attendue.
+- Déploiement : `docker compose up -d` dans `~/Stock_v2` sur le VPS. Le code
+  est monté en volume (`.:/app` dans `docker-compose.yml`), donc aucun
+  rebuild d'image n'était nécessaire — l'image `stock_v2-backend` ne
+  contenait pas encore `0021`, mais le volume l'apporte au runtime.
+- Migrations appliquées par `docker-entrypoint.sh` au démarrage :
+  `0019_alter_sale_sold_at`, `0020_movement_source_destination_transfer_batch`,
+  `0021_merge_20260910_1542`. Vérifié ensuite : `showmigrations` tout en `[X]`,
+  `makemigrations --check --dry-run` → `No changes detected` (feuille unique).
+- Attention (constaté pendant la session) : un déploiement concurrent tournait
+  déjà sur le VPS (`docker compose up -d --build` lancé à 17:44 depuis un
+  terminal interactif, puis un `docker compose down` à 17:55). La collision a
+  laissé quelques conteneurs en état `Dead` avant que le build concurrent ne
+  se termine et relance la stack proprement. À l'avenir : vérifier
+  `ps aux | grep "docker compose"` avant d'agir sur ce VPS.
+- État final : `stock_postgres` (healthy), `stock_redis`, `stock_backend`,
+  `stock_frontend` tous `Up`. Backend joignable publiquement
+  (`http://157.173.103.147:8000/admin/login/` et `/api/users/` → 200), et il
+  sert déjà du trafic utilisateur réel.
+
+---
+
 ## 2026-08-06 (suite 3) — Correction : pré-remplissage par la valeur de stock, pas la dernière caisse
 
 **Prompt utilisateur :**

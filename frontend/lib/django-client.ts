@@ -32,6 +32,29 @@ interface ApiErrorResponse {
   [key: string]: any
 }
 
+export interface AssistantMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface AssistantPendingAction {
+  tool: string
+  description: string
+  token: string
+}
+
+export interface AssistantChatResponse {
+  reply: string
+  actions: { tool: string; arguments: Record<string, unknown>; result: unknown }[]
+  pending_actions: AssistantPendingAction[]
+}
+
+export interface AssistantExecuteResponse {
+  tool: string
+  description: string
+  result: Record<string, unknown>
+}
+
 class DjangoAPIClient {
   private tokens: AuthTokens | null = null
   private isRefreshing = false
@@ -765,6 +788,25 @@ class DjangoAPIClient {
       const query = urlParams.toString() ? `?${urlParams.toString()}` : ''
       return this.get<any[]>(`/users/chat/history/${query}`)
     }
+  }
+
+  // ==================== Assistant IA (Ollama) ====================
+  assistant = {
+    /**
+     * Un tour de conversation. `messages` = historique complet côté client
+     * (le backend est sans état). Peut prendre 30 à 90 s : Ollama tourne sur
+     * CPU côté VPS et un tour enchaîne jusqu'à trois appels au modèle.
+     */
+    chat: async (messages: AssistantMessage[], magasinId?: number | null) => {
+      return this.post<AssistantChatResponse>('/users/assistant/chat/', {
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        magasin_id: magasinId ?? undefined,
+      })
+    },
+    /** Exécute une action prévisualisée, après confirmation explicite. */
+    execute: async (token: string) => {
+      return this.post<AssistantExecuteResponse>('/users/assistant/execute/', { token })
+    },
   }
 
   // ==================== Platform Admin Service (Label Technology) ====================
