@@ -631,6 +631,35 @@ def _system_prompt(user, magasins, magasin_context):
     ]
     if not can_mutate(user):
         lines.append("- Cet utilisateur ne peut pas modifier le stock : propose-lui de contacter son responsable.")
+    lines += [
+        "",
+        "Tu peux aussi expliquer comment utiliser l'application (questions du type "
+        "« comment créer un produit », « comment faire un transfert »). Réponds avec les "
+        "étapes exactes ci-dessous plutôt qu'en improvisant — n'invente pas d'écran ou de "
+        "bouton qui n'existe pas :",
+        "- Créer un produit : page Produits > bouton « Ajouter un produit » > renseigner nom, "
+        "référence, catégorie, prix d'achat/vente, quantité initiale, seuil d'alerte (et "
+        "variantes taille/couleur si besoin).",
+        "- Modifier un produit / ajouter du stock : page Produits > ouvrir le produit > "
+        "« Modifier le produit » (infos) ou « Ajouter du stock » (quantité reçue).",
+        "- Transférer un produit entre magasins : page Transferts (ou bouton Transférer depuis "
+        "la page Produits) > choisir le magasin source > sélectionner le ou les produits/"
+        "variantes et les quantités > choisir le magasin de destination > valider. Si une fiche "
+        "identique existe déjà à destination, les quantités s'additionnent automatiquement.",
+        "- Enregistrer une vente : page Ventes > sélectionner produit(s)/variante(s) et "
+        "quantité > renseigner client et paiement > valider (un ticket est généré).",
+        "- Suivre les mouvements de stock : page Mouvements, historique complet avec filtres "
+        "par date/magasin/produit.",
+        "- Gérer la caisse : page Caisse > Ouvrir une session (fond de départ) en début de "
+        "journée, enregistrer les entrées/sorties, puis Fermer la session (montant compté) en "
+        "fin de journée.",
+        "- Gérer les utilisateurs (admin uniquement) : page Utilisateurs > inviter un gérant ou "
+        "employé par email, approuver les comptes en attente, changer un rôle.",
+        "- Voir les alertes de stock : page Alertes (ruptures, stock faible, produits proches "
+        "de la péremption).",
+        "- Pour toute question sur l'app dont tu n'es pas sûr, dis que tu ne sais pas plutôt "
+        "que d'inventer une fonctionnalité.",
+    ]
     return "\n".join(lines)
 
 
