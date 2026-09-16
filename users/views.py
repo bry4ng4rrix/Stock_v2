@@ -44,6 +44,25 @@ def _variant_label(size, color):
     return '/'.join(parts) if parts else None
 
 
+def _normalize_variant_key(size, color):
+    """Case/whitespace-insensitive key for matching a variant across products
+    (e.g. "Rouge" == "ROUGE" == " rouge ") without needing exact string
+    equality, so a transfer doesn't create a spurious duplicate variant for
+    what is really the same size/color typed differently."""
+    norm = lambda v: " ".join(str(v or "").split()).lower()
+    return (norm(size), norm(color))
+
+
+def _find_matching_variant(product, size, color):
+    """Find an existing variant on `product` matching (size, color) after
+    normalization. Falls back to None if no such variant exists yet."""
+    target = _normalize_variant_key(size, color)
+    for v in ProductVariant.objects.filter(product=product):
+        if _normalize_variant_key(v.size, v.color) == target:
+            return v
+    return None
+
+
 def _check_sale_ownership(user, product):
     """Ensure the requesting user is allowed to record a sale for this product's store."""
     if user.role == "admin":
@@ -3247,9 +3266,7 @@ class TransferProductsView(APIView):
                         )
                     dest_previous = int(dest_product.initial_quantity or 0)
 
-                    dest_variant = ProductVariant.objects.filter(
-                        product=dest_product, size=variant.size, color=variant.color
-                    ).first()
+                    dest_variant = _find_matching_variant(dest_product, variant.size, variant.color)
                     if dest_variant:
                         dest_variant.quantity = int(dest_variant.quantity or 0) + quantity
                         dest_variant.save()
