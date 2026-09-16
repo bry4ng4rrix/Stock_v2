@@ -6,6 +6,8 @@ from .broadcast import broadcast_data_event
 
 @receiver(post_save, sender=Sale)
 def sale_created(sender, instance: Sale, created, **kwargs):
+    if kwargs.get("raw"):
+        return
     broadcast_data_event("sale", "created" if created else "updated", instance)
     if not created:
         return
@@ -23,6 +25,8 @@ def sale_deleted(sender, instance: Sale, **kwargs):
 
 @receiver(post_save, sender=Product)
 def product_created(sender, instance: Product, created, **kwargs):
+    if kwargs.get("raw"):
+        return
     broadcast_data_event("product", "created" if created else "updated", instance)
     if not created:
         return
@@ -40,7 +44,7 @@ def product_deleted(sender, instance: Product, **kwargs):
 
 @receiver(post_save, sender=Movement)
 def movement_created(sender, instance: Movement, created, **kwargs):
-    if not created:
+    if kwargs.get("raw") or not created:
         return
     broadcast_data_event("movement", "created", instance)
     try:
@@ -62,6 +66,8 @@ def movement_deleted(sender, instance: Movement, **kwargs):
 
 @receiver(post_save, sender=CaisseSession)
 def caisse_session_saved(sender, instance: CaisseSession, created, **kwargs):
+    if kwargs.get("raw"):
+        return
     broadcast_data_event("caisse_session", "created" if created else "updated", instance)
     try:
         if created:
@@ -79,7 +85,7 @@ def caisse_session_saved(sender, instance: CaisseSession, created, **kwargs):
 
 @receiver(post_save, sender=CaisseMovement)
 def caisse_movement_saved(sender, instance: CaisseMovement, created, **kwargs):
-    if not created:
+    if kwargs.get("raw") or not created:
         return
     broadcast_data_event("caisse_movement", "created", instance)
     try:
@@ -98,7 +104,7 @@ def caisse_movement_deleted(sender, instance: CaisseMovement, **kwargs):
 
 @receiver(post_save, sender=CustomUser)
 def user_created(sender, instance: CustomUser, created, **kwargs):
-    if not created:
+    if kwargs.get("raw") or not created:
         return
     try:
         msg = f"Nouvel utilisateur: {instance.full_name} ({instance.email}) — rôle: {instance.role}"
@@ -118,7 +124,7 @@ def user_created(sender, instance: CustomUser, created, **kwargs):
 
 @receiver(post_save, sender=Notification)
 def notification_created_broadcast(sender, instance: Notification, created, **kwargs):
-    if not created:
+    if kwargs.get("raw") or not created:
         return
     try:
         from channels.layers import get_channel_layer
@@ -195,7 +201,7 @@ def notification_created_broadcast(sender, instance: Notification, created, **kw
 
 @receiver(post_save, sender=ChatMessage)
 def chat_message_created(sender, instance: ChatMessage, created, **kwargs):
-    if not created:
+    if kwargs.get("raw") or not created:
         return
     try:
         sender_name = instance.sender.full_name or instance.sender.username
