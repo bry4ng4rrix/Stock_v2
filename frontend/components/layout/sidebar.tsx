@@ -7,22 +7,20 @@ import {
   BarChart3,
   Shirt,
   TrendingUp,
-  Truck,
   Settings,
   Menu,
   X,
   LogOut,
   Bell,
-  Users,
   AlertCircle,
   FileBarChart,
   Shield,
   Store,
-  QrCode,
   MessageCircle,
   ShoppingCart,
   ArrowLeftRight,
   Wallet,
+  HelpCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -104,6 +102,11 @@ const navigationItems = [
     href: "/settings",
     icon: Settings,
   },
+  {
+    label: "Aide",
+    href: "/aide",
+    icon: HelpCircle,
+  }
 ];
 
 export function Sidebar() {
