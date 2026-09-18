@@ -28,8 +28,10 @@ second passage du modèle.
 
 import json
 import logging
+import re
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
+from http import client as http_client
 from types import SimpleNamespace
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -585,7 +587,7 @@ def tool_definitions(user):
 # =====================================
 
 def _ollama_chat(body, timeout):
-    url = _conf("OLLAMA_URL", "http://172.17.0.1:11434").rstrip("/") + "/api/chat"
+    url = _conf("OLLAMA_URL", "http://172.18.0.1:11434").rstrip("/") + "/api/chat"
     request = urllib_request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
@@ -617,13 +619,78 @@ def _call_model(messages, tools, timeout):
                 raise
             body.pop("think", None)
             return _ollama_chat(body, timeout)
-    except (urllib_error.URLError, TimeoutError, OSError) as exc:
-        logger.warning("Assistant : Ollama injoignable (%s)", exc)
-        raise AssistantUnavailable("Le service d'assistance est momentanément indisponible.")
+    except urllib_error.HTTPError as exc:
+        raise _classify_http_error(exc, body["model"])
+    except http_client.RemoteDisconnected as exc:
+        # Connexion établie puis coupée sans réponse : Ollama lui-même est
+        # mort pendant la requête (typiquement tué par l'OOM killer au
+        # chargement du modèle), systemd le relance quelques secondes après.
+        logger.error("Assistant : Ollama s'est arrêté pendant la requête (%s) — vérifier la RAM du serveur", exc)
+        raise AssistantUnavailable(AssistantUnavailable.MEMORY, "crash")
+    except TimeoutError as exc:
+        # urlopen n'enveloppe pas le timeout de lecture : il arrive ici tel
+        # quel quand Ollama a bien reçu la requête mais que le modèle n'a pas
+        # fini de générer dans le délai.
+        logger.error("Assistant : Ollama n'a pas répondu en %ss (modèle %s) — modèle trop lent pour ce serveur ?", timeout, body["model"])
+        raise AssistantUnavailable(AssistantUnavailable.TIMEOUT, "timeout")
+    except urllib_error.URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        if isinstance(reason, TimeoutError):
+            logger.error("Assistant : connexion à Ollama expirée (%s)", exc)
+            raise AssistantUnavailable(AssistantUnavailable.TIMEOUT, "timeout")
+        logger.error("Assistant : Ollama injoignable sur %s (%s)", _conf("OLLAMA_URL", ""), reason)
+        raise AssistantUnavailable(AssistantUnavailable.UNREACHABLE, "unreachable")
+    except (OSError, http_client.HTTPException, ValueError) as exc:
+        # Réponse tronquée, JSON invalide, erreur socket inattendue.
+        logger.error("Assistant : réponse Ollama inexploitable (%s : %s)", type(exc).__name__, exc)
+        raise AssistantUnavailable(AssistantUnavailable.SERVER, "server")
+
+
+def _classify_http_error(exc, model):
+    try:
+        detail = exc.read().decode("utf-8", "replace")[:500]
+    except Exception:
+        detail = ""
+    lowered = detail.lower()
+    if exc.code == 404 and "not found" in lowered:
+        logger.error("Assistant : modèle %s absent d'Ollama (%s) — `ollama pull %s`", model, detail, model)
+        return AssistantUnavailable(AssistantUnavailable.MODEL_MISSING, "model_missing")
+    if "killed" in lowered or "memory" in lowered or "terminated" in lowered:
+        # « llama-server process has terminated: signal: killed » : le runner
+        # du modèle a été tué par l'OOM killer. Ce n'est pas un problème
+        # réseau : il manque de RAM libre sur l'hôte.
+        logger.error("Assistant : Ollama a tué le modèle %s faute de mémoire (HTTP %s : %s)", model, exc.code, detail)
+        return AssistantUnavailable(AssistantUnavailable.MEMORY, "memory")
+    logger.error("Assistant : Ollama a répondu HTTP %s : %s", exc.code, detail)
+    return AssistantUnavailable(AssistantUnavailable.SERVER, "server")
 
 
 class AssistantUnavailable(Exception):
-    pass
+    """Ollama n'a pas pu fournir de réponse. Le message est destiné à
+    l'utilisateur ; `reason` (unreachable, timeout, memory, crash,
+    model_missing, server) est renvoyé à l'API pour le diagnostic."""
+
+    UNREACHABLE = "Le service d'assistance est injoignable pour le moment."
+    TIMEOUT = "L'assistant met trop de temps à répondre. Réessayez dans un instant, avec une question plus courte."
+    MEMORY = "Le serveur n'a pas assez de mémoire libre pour charger l'assistant. Réessayez plus tard."
+    MODEL_MISSING = "Le modèle de l'assistant n'est pas installé sur le serveur."
+    SERVER = "Le service d'assistance a rencontré une erreur interne."
+
+    def __init__(self, message, reason="server"):
+        super().__init__(message)
+        self.reason = reason
+
+
+_THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
+
+def _strip_thinking(content):
+    """Retire un éventuel bloc de raisonnement que le modèle aurait laissé
+    dans le texte malgré `think: false` (bloc fermé, ou ouvert sans fin)."""
+    content = _THINK_BLOCK.sub("", content or "")
+    if "<think>" in content:
+        content = content.split("<think>", 1)[0]
+    return content.strip()
 
 
 def _system_prompt(user, magasins, magasin_context):
@@ -715,7 +782,7 @@ def run_conversation(user, raw_messages, magasin_id=None):
         response = _call_model(messages, tools, timeout)
         message = (response or {}).get("message") or {}
         tool_calls = message.get("tool_calls") or []
-        reply = (message.get("content") or "").strip()
+        reply = _strip_thinking(message.get("content"))
 
         if not tool_calls:
             break
@@ -834,7 +901,7 @@ class AssistantChatView(APIView):
         except ValueError as exc:
             return Response({"error": str(exc)}, status=400)
         except AssistantUnavailable as exc:
-            return Response({"error": str(exc)}, status=503)
+            return Response({"error": str(exc), "reason": exc.reason}, status=503)
         return Response(result)
 
 

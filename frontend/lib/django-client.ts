@@ -184,6 +184,7 @@ class DjangoAPIClient {
       if (contentType.includes('application/json')) {
         const error = (await response.json()) as ApiErrorResponse
         errorMessage = error.detail
+          || (typeof error.error === 'string' ? error.error : null)
           || (Array.isArray(error.non_field_errors) ? error.non_field_errors[0] : null)
           || Object.entries(error).map(([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`).join(' | ')
           || errorMessage

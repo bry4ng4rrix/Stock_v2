@@ -4,8 +4,11 @@ Le modèle est simulé (`_call_model` patché) : on vérifie ici le contrat auto
 d'Ollama, pas Ollama lui-même — le service réel n'est disponible que sur le VPS.
 """
 
+import io
 from decimal import Decimal
+from http import client as http_client
 from unittest.mock import patch
+from urllib import error as urllib_error
 
 from django.contrib.auth import get_user_model
 from django.core import signing
@@ -178,3 +181,88 @@ class AssistantAPITestCase(APITestCase):
                 format="json",
             )
         self.assertEqual(response.status_code, 503)
+
+    # --- pannes Ollama --------------------------------------------------
+    # Chaque cause de panne doit être reconnaissable dans la réponse : c'est
+    # ce qui évite, sur le VPS, de chercher un problème réseau quand il
+    # manque de la RAM, ou l'inverse.
+
+    def _chat_with_ollama_failing(self, side_effect):
+        self.client.force_authenticate(user=self.admin)
+        with patch.object(assistant, "_ollama_chat", side_effect=side_effect):
+            return self.client.post(
+                "/api/users/assistant/chat/",
+                {"messages": [{"role": "user", "content": "bonjour"}]},
+                format="json",
+            )
+
+    @staticmethod
+    def _http_error(code, body):
+        return urllib_error.HTTPError("http://ollama/api/chat", code, "err", {}, io.BytesIO(body.encode()))
+
+    def test_ollama_oom_kill_is_reported_as_memory(self):
+        # Corps réel renvoyé par Ollama quand le runner est tué par l'OOM killer.
+        response = self._chat_with_ollama_failing(
+            self._http_error(500, '{"error":"llama-server process has terminated: signal: killed"}')
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data["reason"], "memory")
+        self.assertEqual(response.data["error"], assistant.AssistantUnavailable.MEMORY)
+
+    def test_ollama_dying_mid_request_is_reported_as_crash(self):
+        response = self._chat_with_ollama_failing(
+            http_client.RemoteDisconnected("Remote end closed connection without response")
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data["reason"], "crash")
+        self.assertEqual(response.data["error"], assistant.AssistantUnavailable.MEMORY)
+
+    def test_ollama_read_timeout_is_reported_as_timeout(self):
+        response = self._chat_with_ollama_failing(TimeoutError("timed out"))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data["reason"], "timeout")
+
+    def test_ollama_connection_refused_is_reported_as_unreachable(self):
+        response = self._chat_with_ollama_failing(urllib_error.URLError(ConnectionRefusedError(111, "refused")))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data["reason"], "unreachable")
+        self.assertEqual(response.data["error"], assistant.AssistantUnavailable.UNREACHABLE)
+
+    def test_missing_model_is_reported_as_such(self):
+        response = self._chat_with_ollama_failing(self._http_error(404, '{"error":"model \'x\' not found"}'))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data["reason"], "model_missing")
+
+    def test_http_400_retries_once_without_think(self):
+        # Un Ollama trop ancien refuse le champ `think` : on le retire et on rejoue.
+        calls = []
+
+        def fake_chat(body, timeout):
+            calls.append(dict(body))
+            if "think" in body:
+                raise self._http_error(400, '{"error":"unknown field think"}')
+            return _model_reply(content="Bonjour !")
+
+        self.client.force_authenticate(user=self.admin)
+        with patch.object(assistant, "_ollama_chat", side_effect=fake_chat):
+            response = self.client.post(
+                "/api/users/assistant/chat/",
+                {"messages": [{"role": "user", "content": "bonjour"}]},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("think", calls[0])
+        self.assertNotIn("think", calls[1])
+
+    def test_thinking_block_is_stripped_from_reply(self):
+        self.client.force_authenticate(user=self.admin)
+        reply = _model_reply(content="<think>\nL'utilisateur salue.\n</think>\n\nBonjour ! Que puis-je faire ?")
+        with patch.object(assistant, "_call_model", return_value=reply):
+            response = self.client.post(
+                "/api/users/assistant/chat/",
+                {"messages": [{"role": "user", "content": "bonjour"}]},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["reply"], "Bonjour ! Que puis-je faire ?")
