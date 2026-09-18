@@ -87,11 +87,10 @@ export function LoginForm() {
 
   return (
     <Card className="w-full max-w-md shadow-xl">
-      <CardHeader className="space-y-1 pb-4">
-        <CardTitle className="text-2xl font-bold">Connexion</CardTitle>
-        <CardDescription>Accédez à votre espace E-kajy Entana</CardDescription>
+      <CardHeader className="space-y-1 pb-4 text-center">
+        <CardTitle className="text-2xl font-bold text-center">Connexion</CardTitle>
+        <CardDescription className="text-center">Binvenu sur Valheri-Wear</CardDescription>
       </CardHeader>
-
       <CardContent>
         <form onSubmit={handleLogin} className="space-y-4" noValidate>
           {/* Email */}
@@ -114,17 +113,8 @@ export function LoginForm() {
               />
             </div>
           </div>
-
           {/* Password */}
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label htmlFor="login-password" className="text-sm font-medium">
-                Mot de passe
-              </label>
-              <Link href="/forgot-password" className="text-xs text-primary hover:underline">
-                Mot de passe oublié ?
-              </Link>
-            </div>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
@@ -143,13 +133,11 @@ export function LoginForm() {
                 onClick={() => setShowPw((v) => !v)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 tabIndex={-1}
-                aria-label={showPw ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
-              >
+                aria-label={showPw ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}>
                 {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
           </div>
-
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? (
               <>
@@ -161,13 +149,6 @@ export function LoginForm() {
             )}
           </Button>
         </form>
-
-        <p className="mt-5 text-center text-sm text-muted-foreground">
-          Pas encore de compte?{' '}
-          <Link href="/register" className="text-primary font-medium hover:underline">
-            Créer un compte
-          </Link>
-        </p>
       </CardContent>
     </Card>
   );
