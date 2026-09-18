@@ -25,6 +25,8 @@ export interface TransferCartItem {
   id: number;
   name: string;
   reference: string;
+  /** Reprise de la fiche source : distingue deux produits homonymes. */
+  description?: string;
   quantity: number;
   maxQuantity: number;
   variantId?: number;
@@ -59,6 +61,14 @@ const formatVariantLabel = (size?: string | null, color?: string | null) => {
   );
   return parts.join(" / ");
 };
+
+/**
+ * Deux fiches peuvent partager nom, référence et prix (doublons hérités
+ * d'anciens transferts) : la description est alors le seul élément qui
+ * permet de désigner la bonne au moment de transférer.
+ */
+const productDescription = (product: any): string =>
+  String(product?.description ?? "").trim();
 
 const cartKey = (id: number, variantId?: number | null) =>
   variantId != null ? `${id}:${variantId}` : `${id}`;
@@ -157,6 +167,7 @@ export function TransferProductsPanel({
         id: product.id,
         name: product.name,
         reference: product.reference,
+        description: productDescription(product),
         quantity,
         maxQuantity: stock,
       },
@@ -186,6 +197,7 @@ export function TransferProductsPanel({
         id: product.id,
         name: product.name,
         reference: product.reference,
+        description: productDescription(product),
         quantity,
         maxQuantity: stock,
         variantId: variant.id,
@@ -227,11 +239,14 @@ export function TransferProductsPanel({
     0,
   );
 
-  const filteredSourceProducts = sourceProducts.filter(
-    (p) =>
-      p.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-      p.reference?.toLowerCase().includes(productSearchTerm.toLowerCase()),
-  );
+  const filteredSourceProducts = sourceProducts.filter((p) => {
+    const term = productSearchTerm.toLowerCase();
+    return (
+      p.name?.toLowerCase().includes(term) ||
+      p.reference?.toLowerCase().includes(term) ||
+      productDescription(p).toLowerCase().includes(term)
+    );
+  });
 
   const destinationStores = stores.filter(
     (s) =>
@@ -282,7 +297,7 @@ export function TransferProductsPanel({
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Rechercher un produit..."
+                placeholder="Nom, référence, description..."
                 value={productSearchTerm}
                 onChange={(e) => setProductSearchTerm(e.target.value)}
                 className="pl-9"
@@ -331,6 +346,11 @@ export function TransferProductsPanel({
                           <p className="text-xs text-muted-foreground">
                             {product.reference} · Stock : {stock}
                           </p>
+                          {productDescription(product) && (
+                            <p className="text-xs text-muted-foreground/80 line-clamp-2">
+                              {productDescription(product)}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <Input
@@ -407,6 +427,11 @@ export function TransferProductsPanel({
                             {product.reference} · {variants.length}{" "}
                             variante(s) · Stock : {totalStock}
                           </p>
+                          {productDescription(product) && (
+                            <p className="text-xs text-muted-foreground/80 line-clamp-2">
+                              {productDescription(product)}
+                            </p>
+                          )}
                         </div>
                       </button>
                       {expanded && (
@@ -525,6 +550,11 @@ export function TransferProductsPanel({
                         <p className="text-xs text-muted-foreground">
                           {item.reference} · max {item.maxQuantity}
                         </p>
+                        {item.description && (
+                          <p className="text-xs text-muted-foreground/80 line-clamp-1">
+                            {item.description}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         <Input

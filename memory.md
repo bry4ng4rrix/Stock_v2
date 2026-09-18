@@ -6,6 +6,59 @@ session de travail, la plus récente en haut.
 
 ---
 
+## 2026-09-18 — Page Aide : guide complet de l'application + description produit dans les transferts
+
+**Prompts utilisateur :**
+> sur cette page aide, je veux intégrer toutes les instructions et le guide
+> complet de toute l'app dans cet onglet aide
+
+> et dans la page transfert, afficher sur les produits les descriptions du
+> produit pour bien identifier
+
+**Modifications apportées :**
+
+- **`frontend/app/(app)/aide/page.tsx`** : la page ne contenait qu'un `<h1>`
+  vide. Elle affiche désormais le guide complet : recherche plein texte
+  (insensible aux accents — « peremption » trouve « péremption »), sommaire
+  cliquable, accordéon par section, encadrés « Bon à savoir ».
+  - **Filtrage par rôle** : un employé ne voit pas par défaut les sections
+    Transferts, Magasins ou Super Admin, écrans qu'il ne peut pas atteindre.
+    Un bouton « Afficher tout » lève le filtre, et les sections hors périmètre
+    portent un badge indiquant les rôles concernés (avec le lien « Ouvrir
+    l'écran » masqué, puisqu'il mènerait à un refus d'accès).
+  - Une recherche déplie automatiquement les sections trouvées : le terme
+    cherché est presque toujours dans le corps, pas dans le titre.
+
+- **`frontend/app/(app)/aide/guide-content.ts`** (nouveau) : le contenu est
+  séparé du rendu pour que le texte se relise et se corrige sans toucher au
+  JSX. 18 sections : rôles et permissions, premiers pas, tableau de bord,
+  produits, scanner, ventes, caisse, transferts, mouvements, alertes,
+  rapports, notifications, messagerie, assistant, magasins, équipe/appareils/
+  abonnement, paramètres, sauvegarde, problèmes courants.
+  - Le contenu a été **relevé dans le code**, pas inventé : libellés réels des
+    écrans, et règles métier vérifiées (caisse obligatoire pour gérant et
+    employé, prix d'achat masqué hors admin, stock = somme des variantes,
+    une seule session de caisse ouverte à la fois, suppression d'un produit
+    qui emporte ses ventes en CASCADE, transferts réservés aux admins).
+  - Section « Sauvegarde » : les boutons sont sur l'écran **Produits**, pas
+    sur un écran dédié — vérifié avant de l'écrire.
+
+- **`frontend/components/transfer-products-panel.tsx`** : la capture envoyée
+  montrait six fiches « Strasse / AB-200 » impossibles à distinguer. La
+  description s'affiche maintenant sous la référence, pour les produits avec
+  et sans variantes, ainsi que dans le panier de transfert (`TransferCartItem`
+  gagne un champ `description`) — c'est là qu'on vérifie avant de valider. La
+  recherche porte aussi sur la description, et le placeholder le dit.
+
+**Vérifications :** `tsc --noEmit` sans erreur sur les fichiers touchés
+(l'erreur `stores` de `django-client.ts` est pré-existante), `next build`
+compile et génère `/aide` (34 pages).
+
+**Note :** la capture confirme au passage que la bulle d'assistant est bien en
+place en bas à droite dans l'environnement de l'utilisateur.
+
+---
+
 ## 2026-09-16 — Pull avec conflits résolus + assistant conversationnel Ollama (web + Flutter)
 
 **Prompts utilisateur :**
