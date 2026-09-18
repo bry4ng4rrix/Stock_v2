@@ -73,6 +73,7 @@ services:
       AI_ASSISTANT_ENABLED: "${AI_ASSISTANT_ENABLED:-True}"
       OLLAMA_ASSISTANT_MODEL: "${OLLAMA_ASSISTANT_MODEL:-qwen3:4b}"
       OLLAMA_ASSISTANT_TIMEOUT: "${OLLAMA_ASSISTANT_TIMEOUT:-120}"
+      OLLAMA_ASSISTANT_NUM_CTX: "${OLLAMA_ASSISTANT_NUM_CTX:-8192}"
     command: daphne -b 0.0.0.0 -p 8000 Stock.asgi:application
     volumes:
       - .:/app

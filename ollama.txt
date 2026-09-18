@@ -53,6 +53,28 @@ B) Assistant conversationnel (bulle en bas à droite, web + mobile)
      dédié de 4 min sur ces deux appels.
    - Tests : users/tests_assistant.py (11 tests, modèle simulé).
 
+B bis) Guide d'utilisation servi par l'assistant (18/09/2026)
+   - users/guide.py : charge users/guide_content.json, filtre par rôle,
+     recherche tolérante (accents, racines tronquées, synonymes métier :
+     vendre→vente, transférer→transfert…), renvoie au plus 2 sections /
+     4 000 caractères.
+   - users/guide_content.json : GÉNÉRÉ, ne pas éditer à la main. Source de
+     vérité = frontend/app/(app)/aide/guide-content.ts (la page /aide).
+     Régénérer après toute modification du guide :
+        node --experimental-strip-types scripts/export_guide.ts
+     Un test (tests_guide) échoue si les deux sont désynchronisés.
+   - users/assistant.py : nouvel outil de lecture `guide_app(sujet,
+     section_id)` offert à tous les rôles. Le prompt système ne contient plus
+     que le SOMMAIRE du guide (une ligne par section, filtré sur le rôle,
+     ~1 000 tokens au total pour un admin) ; le texte complet n'est chargé
+     que si le modèle appelle l'outil. L'ancien bloc « comment faire » codé
+     en dur a été supprimé : il divergeait déjà du guide (il parlait d'une
+     « invitation par email » qui n'existe pas dans l'app).
+   - frontend/components/assistant-bubble.tsx : puces de démarrage affichées
+     tant que la conversation est vierge, adaptées au rôle, deux familles
+     (guide en indigo, données en vert). Un clic envoie la question.
+   - Tests : users/tests_guide.py (14 tests).
+
 C) Configuration
    - Stock/settings.py : OLLAMA_URL (défaut http://172.18.0.1:11434),
      OLLAMA_MODEL, OLLAMA_TIMEOUT, AI_PRODUCT_MATCHING_ENABLED,
@@ -265,3 +287,52 @@ E) think:false EST IGNORÉ PAR qwen3:4b
    (a répondu « OK », 2 tokens).
    À traiter : soit filtrer le bloc de raisonnement côté Python, soit changer
    de modèle. NON CORRIGÉ dans cette session (hors du périmètre demandé).
+
+
+6. GUIDE D'UTILISATION DANS L'ASSISTANT + MESSAGES DE DÉMARRAGE (18/09/2026)
+----------------------------------------------------------------------------
+
+A) Ce qui a été construit
+   - users/guide.py : charge users/guide_content.json, filtre par rôle,
+     recherche tolérante (accents, racines tronquées à 5 lettres, petite
+     table de synonymes verbe→nom : vendre→vente, transférer→transfert…).
+     Classement : mot dans le titre de section (10) > titre d'étape (6) >
+     résumé (4) > corps (1). Renvoie au plus 2 sections / 4 000 caractères.
+   - users/guide_content.json : GÉNÉRÉ, ne pas éditer à la main.
+       Source de vérité : frontend/app/(app)/aide/guide-content.ts (page /aide)
+       Régénérer :   node --experimental-strip-types scripts/export_guide.ts
+       Le test users.tests_guide.test_json_is_in_sync_with_the_typescript_source
+       échoue si les identifiants de sections divergent.
+   - users/assistant.py :
+       . nouvel outil de lecture `guide_app(sujet, section_id)`, offert à tous
+         les rôles ;
+       . le bloc « comment utiliser l'app » codé en dur dans _system_prompt a
+         été SUPPRIMÉ et remplacé par le sommaire généré du guide (1 ligne par
+         section, filtré sur le rôle). L'ancien bloc contenait au moins une
+         fausse info (« inviter un gérant par email » : l'app fonctionne par
+         création + approbation de compte).
+       . options.num_ctx désormais envoyé (OLLAMA_ASSISTANT_NUM_CTX, défaut
+         8192). Motif : prompt système ~1 300 tokens + 11 schémas d'outils
+         ~1 600 + extrait du guide ~600 ≈ 3 500, contre 4 096 par défaut.
+         Au-delà, Ollama tronque le DÉBUT (le prompt système) sans erreur.
+   - frontend/components/assistant-bubble.tsx : puces « Pour commencer »
+     affichées tant que la conversation est vierge, adaptées au rôle,
+     deux familles visuellement distinctes (guide = livre/indigo, données =
+     graphique/vert). Un clic envoie le message tel quel.
+   - Tests : users/tests_guide.py (14 tests). Total assistant : 33 tests OK.
+
+B) Validation contre le vrai modèle : NON CONCLUANTE, faute de performance
+   run_conversation(admin, "comment ouvrir la caisse ?") avec qwen3:4b :
+   timeout à 120 s, puis timeout à 600 s sur le PREMIER appel au modèle.
+   Mesuré pendant qu'un `docker compose build` d'une autre session saturait
+   la machine (load 6-7 sur 4 vCPU) : chiffres à reprendre au calme.
+   Le point 5-D reste valable : à 1,54 tok/s, l'assistant avec outils n'est
+   pas utilisable avec qwen3:4b sur ce VPS, guide ou pas.
+
+   À FAIRE pour valider la fonctionnalité de bout en bout :
+     1. Machine au repos (pas de build en parallèle).
+     2. Essayer OLLAMA_ASSISTANT_MODEL=qwen2.5:0.5b (tools OK, ~4 tok/s,
+        pas de fuite de « thinking ») et vérifier que le modèle appelle bien
+        guide_app puis reformule le texte sans inventer.
+     3. Si oui, envisager de mettre le MÊME modèle pour le rapprochement
+        (OLLAMA_MODEL), voir piège 5-D sur l'alternance de modèles.

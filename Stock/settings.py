@@ -250,3 +250,9 @@ OLLAMA_ASSISTANT_MODEL = os.environ.get("OLLAMA_ASSISTANT_MODEL", OLLAMA_MODEL)
 # Un tour de conversation peut enchaîner jusqu'à trois appels au modèle, et
 # sur CPU chacun prend des dizaines de secondes : timeout par appel généreux.
 OLLAMA_ASSISTANT_TIMEOUT = float(os.environ.get("OLLAMA_ASSISTANT_TIMEOUT", "120"))
+# Fenêtre de contexte demandée à Ollama. Le prompt système (~1 300 tokens) plus
+# les schémas des 11 outils (~1 600) plus un extrait du guide (~600) frôlent
+# les 4 096 par défaut : au-delà, Ollama tronque le début — le prompt système —
+# sans erreur. 8 192 laisse la place à la conversation. Coût : de la RAM pour
+# le cache KV, ~0,5 Go de plus sur qwen3:4b.
+OLLAMA_ASSISTANT_NUM_CTX = int(os.environ.get("OLLAMA_ASSISTANT_NUM_CTX", "8192"))

@@ -603,7 +603,11 @@ def _call_model(messages, tools, timeout):
         "tools": tools,
         "stream": False,
         "think": False,
-        "options": {"temperature": 0.2, "num_predict": 600},
+        "options": {
+            "temperature": 0.2,
+            "num_predict": 600,
+            "num_ctx": int(_conf("OLLAMA_ASSISTANT_NUM_CTX", 8192)),
+        },
     }
     try:
         try:
