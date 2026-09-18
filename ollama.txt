@@ -336,3 +336,63 @@ B) Validation contre le vrai modèle : NON CONCLUANTE, faute de performance
         guide_app puis reformule le texte sans inventer.
      3. Si oui, envisager de mettre le MÊME modèle pour le rapprochement
         (OLLAMA_MODEL), voir piège 5-D sur l'alternance de modèles.
+
+
+7. PANNE « SERVICE MOMENTANÉMENT INDISPONIBLE » — DIAGNOSTIC (18/09/2026)
+--------------------------------------------------------------------------
+
+A) Cause racine : OOM, pas le réseau
+   Log backend : « Ollama injoignable (Remote end closed connection without
+   response) ». Reproduit à la main : POST /api/chat qwen3:4b →
+   HTTP 500 {"error":"llama-server process has terminated: signal: killed"}
+   (runner tué par l'OOM killer), ou coupure de connexion quand c'est tout
+   Ollama qui meurt (systemd le relance 3 s après). /proc/vmstat : oom_kill
+   passé de 5 à 6 pendant les essais. 172.18.0.1:11434 répond parfaitement.
+   RAM : 7,9 Go, 0 swap. Au moment de la panne, ~3,9 Go étaient pris par les
+   serveurs IDE distants (vscode-server ×N, Antigravity, extensions Claude
+   Code) : ~2,6 Go disponibles, insuffisant pour qwen3:4b (2,5 Go de poids +
+   ~1 Go de cache KV à num_ctx 8192). Même à num_ctx 4096 : tué.
+   Un second Ollama (snap, v0.34.0, root, 127.0.0.1:11434, aucun modèle)
+   tourne inutilement à côté du service systemd (v0.30.10, 172.18.0.1).
+
+B) Ce qui a été corrigé dans le code
+   users/assistant.py : _call_model distingue désormais les pannes et les
+   journalise avec leur cause — HTTP 500 « killed » → mémoire ;
+   RemoteDisconnected → Ollama mort en cours de requête ; TimeoutError →
+   modèle trop lent ; URLError → injoignable ; 404 → modèle absent. La vue
+   renvoie {"error": <message adapté>, "reason": <code>} en 503.
+   _strip_thinking retire un bloc <think> résiduel de la réponse.
+   frontend/lib/django-client.ts : lit la clé `error` (convention du
+   backend) au lieu d'afficher « error: … ».
+   Tests : users/tests_assistant.py, 7 tests ajoutés (18 au total, OK).
+
+C) Matrice des modèles, mesurée depuis stock_backend avec la vraie
+   run_conversation (utilisateur 51, magasin 13), machine chargée (load ~4,5) :
+
+     modèle         RAM chargé  tok/s  stock (lecture)   guide        action
+     qwen3:4b       ~3,3 Go     1,5    OOM               OOM          OOM
+     qwen3:1.7b     2,4 Go      2,0    n'appelle l'outil qu'avec think:true
+                                       (+100 tokens de raisonnement ≈ 50 s)
+     qwen2.5:1.5b   1,4 Go      ~3     INVENTE un chiffre INVENTE      invente l'id
+     qwen2.5:0.5b   0,6 Go      ~4     OK (33 s)         INVENTE      invente l'id
+
+   « invente » = répond sans appeler l'outil, malgré le prompt. Sur l'action,
+   0.5b et 1.5b passent un product_id fantaisiste sans search_products :
+   le garde-fou de prévisualisation rejette, aucun dégât.
+   qwen3:1.7b et qwen2.5:1.5b ont été tirés pour ces essais et laissés sur
+   le disque (ollama rm pour les retirer).
+
+D) Conclusion
+   Sur ce VPS (4 vCPU, pas de GPU, 8 Go partagés avec deux stacks applicatives
+   et les IDE distants), aucun modèle local ne donne un assistant à outils
+   à la fois fiable et réactif. Le 4b est le seul à suivre les consignes mais
+   il faut ~3,5 Go libres et il tourne à 1,5 tok/s (minutes par réponse).
+   Pistes, par ordre de préférence :
+     1. Basculer l'assistant sur une API hébergée (modèle rapide avec appel
+        d'outils natif) : seule option qui règle à la fois la RAM, la vitesse
+        et la fiabilité. _call_model est le seul point à adapter.
+     2. À défaut, hygiène machine : swapfile 4 Go (évite l'OOM, ne règle pas
+        la lenteur), fermer les sessions IDE inutiles, retirer le snap ollama,
+        OLLAMA_ASSISTANT_TIMEOUT=600, et accepter des réponses en minutes.
+     3. Sinon AI_ASSISTANT_ENABLED=False (la bulle affiche alors une erreur
+        503 « désactivé » : le frontend ne masque pas encore la bulle).
