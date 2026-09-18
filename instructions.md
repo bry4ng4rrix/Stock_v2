@@ -48,10 +48,13 @@ git push origin main
 
 Ollama n'écoute aujourd'hui que sur `127.0.0.1`, qui à l'intérieur d'un
 conteneur désigne le conteneur lui-même : il faut le faire écouter sur la
-passerelle `docker0` (`172.17.0.1`). Cette adresse est **privée** — joignable
+passerelle du réseau `stock_v2_default` (`172.18.0.1`). Cette adresse est **privée** — joignable
 par tous les conteneurs de la machine, jamais depuis Internet. C'est le point
-important : ne pas mettre `0.0.0.0`, il n'y a aucun pare-feu actif sur ce VPS
-et le port 11434 deviendrait public.
+important : ne pas mettre `0.0.0.0`, le port 11434 deviendrait public.
+
+> **UFW est actif sur ce VPS** (`deny (incoming)` par defaut). Se binder sur
+> `172.18.0.1` ne suffit donc pas : sans regle UFW explicite, les conteneurs
+> obtiennent un *timeout* sur le port 11434. Voir la section 1 bis.
 
 ```bash
 sudo mkdir -p /etc/systemd/system/ollama.service.d
@@ -59,8 +62,8 @@ sudo mkdir -p /etc/systemd/system/ollama.service.d
 sudo tee /etc/systemd/system/ollama.service.d/override.conf > /dev/null <<'EOF'
 [Service]
 # Joignable depuis les conteneurs Docker via la passerelle docker0, et
-# uniquement depuis eux : 172.17.0.1 n'est pas routable depuis Internet.
-Environment="OLLAMA_HOST=172.17.0.1:11434"
+# uniquement depuis eux : 172.18.0.1 n'est pas routable depuis Internet.
+Environment="OLLAMA_HOST=172.18.0.1:11434"
 # Garde le modèle chargé en RAM entre deux transferts. Sans cela, le premier
 # appel après 5 minutes d'inactivité recharge 2,5 Go et dépasse le timeout.
 Environment="OLLAMA_KEEP_ALIVE=30m"
@@ -70,19 +73,19 @@ sudo systemctl daemon-reload
 sudo systemctl restart ollama
 ```
 
-**Vérification** — doit afficher `172.17.0.1:11434` :
+**Vérification** — doit afficher `172.18.0.1:11434` :
 
 ```bash
 ss -tln | grep 11434
-curl -s --max-time 5 http://172.17.0.1:11434/api/tags | head -c 120; echo
+curl -s --max-time 5 http://172.18.0.1:11434/api/tags | head -c 120; echo
 ```
 
 La CLI `ollama` de l'hôte ne trouve plus le serveur sur `127.0.0.1`. Pour
 qu'elle continue de fonctionner :
 
 ```bash
-echo 'OLLAMA_HOST=172.17.0.1:11434' | sudo tee -a /etc/environment
-export OLLAMA_HOST=172.17.0.1:11434   # pour la session en cours
+echo 'OLLAMA_HOST=172.18.0.1:11434' | sudo tee -a /etc/environment
+export OLLAMA_HOST=172.18.0.1:11434   # pour la session en cours
 ollama list
 ```
 
@@ -91,6 +94,52 @@ ollama list
 
 ```bash
 curl -s --max-time 5 http://157.173.103.147:11434/api/tags
+```
+
+---
+
+## 1 bis. Autoriser le port 11434 dans UFW
+
+Se binder sur `172.18.0.1` ne suffit pas : UFW est actif avec
+`Default: deny (incoming)`, et tout paquet entrant vers une adresse de l'hôte —
+y compris la passerelle `docker0`/`br-*` — traverse la chaîne `INPUT`. Sans
+règle explicite, les conteneurs obtiennent un **timeout** (et non un
+« connection refused », ce qui rend le symptôme trompeur).
+
+```bash
+sudo ufw allow from 172.18.0.0/16 to 172.18.0.1 port 11434 proto tcp \
+  comment 'Ollama - conteneurs Docker stock_v2 uniquement'
+```
+
+La règle est volontairement restreinte à la source **et** à la destination :
+seuls les conteneurs du réseau `stock_v2_default` passent. Les autres réseaux
+Docker de la machine (`ecoliko`, `smartphone`) et Internet restent bloqués.
+UFW persiste ses règles dans `/etc/ufw/user.rules` : rien à faire pour le
+redémarrage.
+
+**Vérifications** — la première doit réussir, les trois autres échouer :
+
+```bash
+docker exec stock_backend python3 -c "import urllib.request;print(urllib.request.urlopen('http://172.18.0.1:11434/api/tags',timeout=10).status)"
+docker exec ecoliko-backend-1 sh -c "timeout 6 python3 -c \"import urllib.request;urllib.request.urlopen('http://172.18.0.1:11434/api/version',timeout=5)\""
+curl -s --max-time 8 http://157.173.103.147:11434/api/tags
+curl -s --max-time 8 "http://[2a02:c207:2333:9424::1]:11434/api/tags"
+```
+
+### Diagnostic si ça retombe en panne
+
+Le test qui tranche : depuis le conteneur, comparer un port autorisé par UFW
+(22) et le port 11434. Si le 22 se connecte instantanément et que le 11434
+timeout, le réseau Docker est sain et c'est UFW qui bloque.
+
+```bash
+docker exec stock_backend python3 -c "
+import socket,time
+for port in (22,11434):
+    t=time.time(); s=socket.socket(); s.settimeout(4)
+    try: s.connect(('172.18.0.1',port)); print(port,'CONNECTE %.2fs'%(time.time()-t))
+    except Exception as e: print(port,type(e).__name__)
+    finally: s.close()"
 ```
 
 ---
@@ -126,7 +175,7 @@ cd ~/Stock_v2
 docker compose exec -T backend python -c "
 import json
 from urllib.request import urlopen
-data = json.loads(urlopen('http://172.17.0.1:11434/api/tags', timeout=15).read())
+data = json.loads(urlopen('http://172.18.0.1:11434/api/tags', timeout=15).read())
 print('Modeles vus par Django :', [m['name'] for m in data['models']])
 "
 ```
@@ -225,7 +274,7 @@ puis `docker compose up -d backend`.
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `AI_PRODUCT_MATCHING_ENABLED` | `True` | `False` coupe l'IA ; le rapprochement déterministe continue de fonctionner |
-| `OLLAMA_URL` | `http://172.17.0.1:11434` | Adresse du serveur Ollama |
+| `OLLAMA_URL` | `http://172.18.0.1:11434` | Adresse du serveur Ollama |
 | `OLLAMA_MODEL` | `qwen3:4b` | Modèle utilisé |
 | `OLLAMA_TIMEOUT` | `20` | Secondes par appel |
 | `AI_MATCH_MIN_CONFIDENCE` | `0.7` | En dessous, la proposition est ignorée |

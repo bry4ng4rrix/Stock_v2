@@ -54,7 +54,7 @@ B) Assistant conversationnel (bulle en bas à droite, web + mobile)
    - Tests : users/tests_assistant.py (11 tests, modèle simulé).
 
 C) Configuration
-   - Stock/settings.py : OLLAMA_URL (défaut http://172.17.0.1:11434),
+   - Stock/settings.py : OLLAMA_URL (défaut http://172.18.0.1:11434),
      OLLAMA_MODEL, OLLAMA_TIMEOUT, AI_PRODUCT_MATCHING_ENABLED,
      AI_MATCH_MIN_CONFIDENCE, AI_MATCH_MAX_CANDIDATES, AI_MATCH_TIME_BUDGET,
      AI_ASSISTANT_ENABLED, OLLAMA_ASSISTANT_MODEL, OLLAMA_ASSISTANT_TIMEOUT.
@@ -72,15 +72,17 @@ C) Configuration
     depuis le PC ; demander à l'utilisateur de faire git push, puis git pull.
 
 Étape 1 — exposer Ollama aux conteneurs (sudo, décrit dans instructions.md)
-    Drop-in systemd : OLLAMA_HOST=172.17.0.1:11434 et OLLAMA_KEEP_ALIVE=30m.
-    NE PAS mettre 0.0.0.0 : aucun pare-feu actif, le port serait public.
-    Vérifier : ss -tln | grep 11434  → 172.17.0.1:11434
+    Drop-in systemd : OLLAMA_HOST=172.18.0.1:11434 et OLLAMA_KEEP_ALIVE=30m.
+    NE PAS mettre 0.0.0.0 : le port deviendrait public.
+    UFW est ACTIF (deny incoming par defaut) : il faut en plus autoriser
+    explicitement le port, sinon les conteneurs timeout (voir section 5).
+    Vérifier : ss -tln | grep 11434  → 172.18.0.1:11434
 
 Étape 2 — recréer le backend et vérifier l'accès depuis le conteneur
     docker compose config -q && docker compose up -d backend
     docker compose exec -T backend python -c "
     import json; from urllib.request import urlopen
-    print([m['name'] for m in json.loads(urlopen('http://172.17.0.1:11434/api/tags', timeout=15).read())['models']])"
+    print([m['name'] for m in json.loads(urlopen('http://172.18.0.1:11434/api/tags', timeout=15).read())['models']])"
 
 Étape 3 — tests automatisés (sans Ollama, modèle simulé)
     docker compose exec -T backend python manage.py test users.tests_transfer_merge users.tests_assistant
@@ -151,9 +153,10 @@ C) Configuration
 3. PIÈGES CONNUS
 ----------------
 - 127.0.0.1 dans un conteneur = le conteneur. Ollama doit écouter sur
-  172.17.0.1 (docker0) ; c'est le sens du drop-in systemd.
+  172.18.0.1 (passerelle du réseau compose stock_v2_default, épinglée
+  dans docker-compose.yml) ; c'est le sens du drop-in systemd.
 - Après le drop-in, la CLI `ollama` de l'hôte a besoin de
-  OLLAMA_HOST=172.17.0.1:11434 (ajouté à /etc/environment par instructions.md).
+  OLLAMA_HOST=172.18.0.1:11434 (ajouté à /etc/environment par instructions.md).
 - qwen3 "réfléchit" par défaut : think:false est envoyé, avec repli sans le
   champ si le modèle ne le supporte pas (HTTP 400).
 - Le premier appel après inactivité recharge le modèle (2,5 Go) : d'où
@@ -182,3 +185,83 @@ C) Configuration
   memory.md                     journal complet des sessions
   frontend/components/assistant-bubble.tsx
   valhery_wear/lib/features/assistant/assistant_bubble.dart
+
+
+5. ÉTAT CONSTATÉ SUR LE VPS — session du 18/09/2026
+---------------------------------------------------
+
+Ollama n'a PAS été réinstallé : le service était sain. Le blocage venait du
+pare-feu. Ce qui a été fait :
+
+A) CAUSE DE LA PANNE « le conteneur ne joint pas Ollama »
+   UFW a été activé sur le VPS APRÈS la mise en place d'Ollama (la version
+   précédente de ce fichier affirmait « aucun pare-feu actif » — c'était vrai
+   à l'époque, plus maintenant). Politique `deny (incoming)` par défaut, et
+   11434 absent de la liste des ports autorisés. Le trafic conteneur →
+   passerelle Docker traverse la chaîne INPUT de l'hôte : il était donc jeté.
+   Symptôme trompeur : TIMEOUT et non « connection refused ».
+   Test qui tranche : depuis le conteneur, le port 22 de l'hôte se connecte
+   en 0,00 s, le 11434 timeout → réseau Docker sain, c'est UFW.
+
+   Correction (persistante, voir instructions.md § 1 bis) :
+     sudo ufw allow from 172.18.0.0/16 to 172.18.0.1 port 11434 proto tcp
+   Vérifié : stock_backend OK en 0,03 s ; réseau ecoliko (172.19) bloqué ;
+   IPv4 et IPv6 publiques bloquées.
+
+B) ADRESSE DE BIND — la doc disait 172.17.0.1 (docker0), le déploiement réel
+   utilise 172.18.0.1 = passerelle du réseau compose `stock_v2_default`,
+   épinglée dans docker-compose.yml. Toute la doc a été corrigée.
+
+C) DROP-IN SYSTEMD réécrit, + /etc/systemd/system/ollama.service.d/
+   10-docker-order.conf ajouté (After=docker.service) : sans cet
+   ordonnancement, Ollama démarrait avant que dockerd ait créé le réseau et
+   échouait à se binder. Ajouté aussi OLLAMA_NUM_PARALLEL=1 et
+   OLLAMA_MAX_LOADED_MODELS=1 (7,8 Go de RAM, aucun swap).
+   OLLAMA_HOST=172.18.0.1:11434 ajouté à /etc/environment (il n'y était pas) :
+   la CLI `ollama` fonctionne désormais dès la connexion SSH.
+   Sauvegardes : override.conf.bak-*, /etc/ufw/user.rules.bak-*.
+
+D) PERFORMANCE — MESURES APRÈS LIBÉRATION D'ESPACE DISQUE
+   Le disque est passé de 81 % à 31 % d'occupation (101 Go libres). Mesures
+   refaites à l'identique depuis stock_backend, machine au repos :
+
+                      AVANT (disque 81 %)      APRÈS (disque 31 %)
+     qwen3:4b         0,48 tok/s               1,54 tok/s    (x3,2)
+     qwen2.5:0.5b     2,25 tok/s               4,01 tok/s    (x1,8)
+     qwen3:4b à froid 108 s (load 22 s)        81 s (load 17 s)
+     qwen3:4b à chaud 256 s                    111 s
+
+   LE GOULOT DISQUE A DISPARU. vmstat pendant l'inférence, avant/après :
+     avant : us 18 %  | id 45-75 % | wa 16-35 % | bi/bo élevés
+     après : us 93-97 % | id 0-4 %   | wa 0 %     | bi/bo ≈ 0
+   La machine est maintenant réellement limitée par le CPU. 1,54 tok/s est
+   donc le PLAFOND de qwen3:4b sur ces 4 vCPU : plus rien à gagner côté
+   disque ou RAM. Pour aller plus vite il faut changer de modèle, réduire le
+   nombre de tokens générés, ou plus de CPU.
+
+   Conséquences sur les réglages actuels — TOUJOURS INADAPTÉS :
+     rapprochement (num_predict=150) : ~100 s d'eval + prompt
+        → OLLAMA_TIMEOUT=20 et AI_MATCH_TIME_BUDGET=45 échouent toujours.
+     assistant (num_predict=600, jusqu'à 3 appels modèle) : ~390 s par appel
+        → OLLAMA_ASSISTANT_TIMEOUT=120 échoue toujours.
+   Valeurs cohérentes avec 1,54 tok/s si on garde qwen3:4b :
+     OLLAMA_TIMEOUT=180, AI_MATCH_TIME_BUDGET=200, OLLAMA_ASSISTANT_TIMEOUT=600.
+   Mais 6 min d'attente pour une réponse d'assistant reste inacceptable en
+   usage réel : voir le point E, qui est le vrai levier.
+
+   ⚠ Ne PAS régler OLLAMA_MODEL=qwen2.5:0.5b pour le rapprochement en gardant
+   qwen3:4b pour l'assistant : avec OLLAMA_MAX_LOADED_MODELS=1, chaque
+   alternance provoque une éviction + rechargement. Utiliser le MÊME modèle
+   pour les deux usages, ou passer MAX_LOADED_MODELS à 2 en surveillant la
+   RAM (3,2 + 0,6 Go, sans swap : risque d'OOM).
+
+E) think:false EST IGNORÉ PAR qwen3:4b
+   Le champ est bien envoyé (ai_matching.py:224, assistant.py:585) et Ollama
+   0.30.10 l'accepte sans erreur, mais la réponse ne contient pas de champ
+   `thinking` : le raisonnement est déversé dans `content`. Constaté : 110
+   tokens de raisonnement en anglais pour répondre « OK ».
+   C'est ce qui explique une bonne part de la lenteur, ET cela pollue les
+   réponses affichées à l'utilisateur. qwen2.5:0.5b n'a pas ce défaut
+   (a répondu « OK », 2 tokens).
+   À traiter : soit filtrer le bloc de raisonnement côté Python, soit changer
+   de modèle. NON CORRIGÉ dans cette session (hors du périmètre demandé).

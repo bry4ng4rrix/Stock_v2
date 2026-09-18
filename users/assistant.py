@@ -43,6 +43,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from . import guide
 from .models import EmployerProfile, MagasinProfile, Movement, Product, ProductVariant, Sale
 from .subscriptions import get_company_magasins
 
@@ -483,6 +484,17 @@ def execute_transfer_product(user, product_id, destination_magasin_id, quantite,
     }
 
 
+def tool_guide_app(user, sujet="", section_id=None, **_):
+    """Extrait du guide d'utilisation, filtré sur le rôle de l'utilisateur.
+
+    Le guide est volumineux : il n'est pas dans le prompt système, seul son
+    index y figure. Le modèle appelle cet outil dès qu'on lui demande comment
+    faire quelque chose, et répond à partir du texte renvoyé — jamais de
+    mémoire, sinon il invente des écrans et des boutons.
+    """
+    return guide.lookup(getattr(user, "role", None), sujet=sujet, section_id=section_id)
+
+
 # =====================================
 # REGISTRE DES OUTILS
 # =====================================
@@ -501,6 +513,14 @@ def _schema(name, description, properties, required=()):
 _MAGASIN_PROP = {"type": "integer", "description": "Identifiant du magasin (voir list_magasins). Omis = tous vos magasins."}
 
 READ_TOOLS = {
+    "guide_app": (tool_guide_app, _schema(
+        "guide_app",
+        "Guide d'utilisation de l'application : explique comment faire quelque chose, "
+        "à quoi sert un écran, quelles sont les règles (rôles, caisse, variantes, "
+        "transferts, abonnement…). À appeler pour TOUTE question « comment… », "
+        "« à quoi sert… », « pourquoi je ne peux pas… ».",
+        {"sujet": {"type": "string", "description": "La question ou les mots-clés, en français. Ex : « ouvrir la caisse », « variantes », « import excel »."},
+         "section_id": {"type": "string", "description": "Identifiant exact d'une section, si connu (voir l'index du prompt)."}})),
     "list_magasins": (tool_list_magasins, _schema(
         "list_magasins", "Liste les magasins accessibles avec leur identifiant.", {})),
     "search_products": (tool_search_products, _schema(
@@ -631,35 +651,22 @@ def _system_prompt(user, magasins, magasin_context):
     ]
     if not can_mutate(user):
         lines.append("- Cet utilisateur ne peut pas modifier le stock : propose-lui de contacter son responsable.")
-    lines += [
-        "",
-        "Tu peux aussi expliquer comment utiliser l'application (questions du type "
-        "« comment créer un produit », « comment faire un transfert »). Réponds avec les "
-        "étapes exactes ci-dessous plutôt qu'en improvisant — n'invente pas d'écran ou de "
-        "bouton qui n'existe pas :",
-        "- Créer un produit : page Produits > bouton « Ajouter un produit » > renseigner nom, "
-        "référence, catégorie, prix d'achat/vente, quantité initiale, seuil d'alerte (et "
-        "variantes taille/couleur si besoin).",
-        "- Modifier un produit / ajouter du stock : page Produits > ouvrir le produit > "
-        "« Modifier le produit » (infos) ou « Ajouter du stock » (quantité reçue).",
-        "- Transférer un produit entre magasins : page Transferts (ou bouton Transférer depuis "
-        "la page Produits) > choisir le magasin source > sélectionner le ou les produits/"
-        "variantes et les quantités > choisir le magasin de destination > valider. Si une fiche "
-        "identique existe déjà à destination, les quantités s'additionnent automatiquement.",
-        "- Enregistrer une vente : page Ventes > sélectionner produit(s)/variante(s) et "
-        "quantité > renseigner client et paiement > valider (un ticket est généré).",
-        "- Suivre les mouvements de stock : page Mouvements, historique complet avec filtres "
-        "par date/magasin/produit.",
-        "- Gérer la caisse : page Caisse > Ouvrir une session (fond de départ) en début de "
-        "journée, enregistrer les entrées/sorties, puis Fermer la session (montant compté) en "
-        "fin de journée.",
-        "- Gérer les utilisateurs (admin uniquement) : page Utilisateurs > inviter un gérant ou "
-        "employé par email, approuver les comptes en attente, changer un rôle.",
-        "- Voir les alertes de stock : page Alertes (ruptures, stock faible, produits proches "
-        "de la péremption).",
-        "- Pour toute question sur l'app dont tu n'es pas sûr, dis que tu ne sais pas plutôt "
-        "que d'inventer une fonctionnalité.",
-    ]
+    index = guide.prompt_index(getattr(user, "role", None))
+    if index:
+        lines += [
+            "",
+            "QUESTIONS SUR LE FONCTIONNEMENT DE L'APPLICATION",
+            "Tu disposes du guide d'utilisation complet, mais tu n'en vois ici que le",
+            "sommaire. Pour toute question du type « comment faire… », « à quoi sert… »,",
+            "« pourquoi je ne peux pas… », appelle l'outil guide_app et réponds",
+            "UNIQUEMENT à partir du texte qu'il renvoie. N'invente jamais un écran, un",
+            "bouton ou une règle : si le guide ne le dit pas, dis que tu ne sais pas.",
+            "Le sommaire est déjà filtré sur le rôle de l'utilisateur : ce qui n'y figure",
+            "pas ne lui est pas accessible.",
+            "",
+            "Sections du guide :",
+            index,
+        ]
     return "\n".join(lines)
 
 

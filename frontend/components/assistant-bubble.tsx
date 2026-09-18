@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Check, Loader2, MessageCircle, Send, Trash2, X } from 'lucide-react';
+import { BarChart3, Bot, BookOpen, Check, Loader2, MessageCircle, Send, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { djangoClient, type AssistantMessage, type AssistantPendingAction } from '@/lib/django-client';
@@ -22,9 +22,52 @@ type Bubble = AssistantMessage & { id: string; pending?: AssistantPendingAction[
 
 const STORAGE_KEY = 'assistant.conversation';
 const WELCOME =
-  "Bonjour ! Je peux répondre sur votre stock, vos ventes et vos mouvements, et faire des actions " +
-  "(ajuster un stock, changer un prix, transférer un produit) après votre confirmation. " +
-  "Que puis-je faire ?";
+  "Bonjour ! Je réponds sur votre stock, vos ventes et vos mouvements, j'explique comment " +
+  "utiliser l'application, et je peux agir (ajuster un stock, changer un prix, transférer un " +
+  "produit) après votre confirmation. Que puis-je faire ?";
+
+/**
+ * Messages de démarrage proposés tant que la conversation est vierge.
+ *
+ * Deux familles volontairement mélangées : « guide » (le fonctionnement de
+ * l'app, servi par l'outil guide_app) et « données » (les chiffres réels du
+ * magasin). C'est ce qui montre d'emblée que l'assistant sait faire les deux —
+ * sans exemples, les utilisateurs ne posent que des questions de stock.
+ *
+ * Les listes suivent les mêmes droits que le guide : inutile de proposer un
+ * transfert à un gérant, l'écran ne lui est pas accessible.
+ */
+type Suggestion = { kind: 'guide' | 'data'; label: string; prompt: string };
+
+const SUGGESTIONS_COMMON: Suggestion[] = [
+  { kind: 'guide', label: 'Enregistrer une vente', prompt: 'Comment enregistrer une vente ?' },
+  { kind: 'guide', label: 'Ouvrir la caisse', prompt: 'Comment ouvrir et fermer la caisse ?' },
+  { kind: 'data', label: 'Produits en alerte', prompt: 'Quels produits sont en alerte de stock ?' },
+  { kind: 'data', label: 'Résumé du stock', prompt: 'Fais-moi un résumé de mon stock.' },
+];
+
+const SUGGESTIONS_MANAGERS: Suggestion[] = [
+  { kind: 'data', label: 'Ventes de la semaine', prompt: 'Quelles sont mes ventes des 7 derniers jours ?' },
+  { kind: 'guide', label: 'Réapprovisionner', prompt: 'Comment ajouter du stock à un produit existant ?' },
+  { kind: 'guide', label: 'Gérer les variantes', prompt: 'Comment fonctionnent les variantes taille et couleur ?' },
+  { kind: 'data', label: 'Derniers mouvements', prompt: 'Montre-moi les derniers mouvements de stock.' },
+];
+
+const SUGGESTIONS_ADMIN: Suggestion[] = [
+  { kind: 'guide', label: 'Transférer un produit', prompt: 'Comment transférer un produit vers un autre magasin ?' },
+  { kind: 'guide', label: 'Créer un compte', prompt: "Comment créer et approuver le compte d'un gérant ?" },
+];
+
+const SUGGESTIONS_EMPLOYER: Suggestion[] = [
+  { kind: 'guide', label: 'Scanner un produit', prompt: 'Comment scanner le QR code d\'un produit ?' },
+  { kind: 'guide', label: 'Ce que je peux faire', prompt: 'Que puis-je faire avec mon rôle employé ?' },
+];
+
+function suggestionsFor(role: string | undefined): Suggestion[] {
+  if (role === 'admin') return [...SUGGESTIONS_COMMON, ...SUGGESTIONS_MANAGERS, ...SUGGESTIONS_ADMIN];
+  if (role === 'magasin') return [...SUGGESTIONS_COMMON, ...SUGGESTIONS_MANAGERS];
+  return [...SUGGESTIONS_COMMON, ...SUGGESTIONS_EMPLOYER];
+}
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -65,12 +108,18 @@ export function AssistantBubble() {
   if (!user || user.role === 'platform_admin') return null;
 
   const canAct = user.role === 'admin' || user.role === 'magasin';
+  const suggestions = suggestionsFor(user.role);
+  // Uniquement sur une conversation vierge : une fois l'échange engagé, ces
+  // puces prendraient la place des messages dans une fenêtre déjà étroite.
+  const showSuggestions = !busy && messages.length <= 1;
   const magasinId = user.role === 'admin' ? null : (user.magasin_id ?? user.store_id ?? null);
 
-  const send = async () => {
-    const text = input.trim();
+  // `preset` : texte imposé par un clic sur une suggestion. Sans lui, on prend
+  // le contenu du champ de saisie.
+  const send = async (preset?: string) => {
+    const text = (preset ?? input).trim();
     if (!text || busy) return;
-    setInput('');
+    if (!preset) setInput('');
     const userMessage: Bubble = { id: newId(), role: 'user', content: text };
     const history = [...messages, userMessage];
     setMessages(history);
@@ -193,6 +242,34 @@ export function AssistantBubble() {
                 </div>
               </div>
             ))}
+            {showSuggestions && (
+              <div className="space-y-2 pt-1">
+                <div className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Pour commencer
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {suggestions.map((s) => (
+                    <button
+                      key={s.prompt}
+                      type="button"
+                      onClick={() => void send(s.prompt)}
+                      disabled={busy}
+                      title={s.prompt}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition',
+                        'hover:border-indigo-400 hover:bg-indigo-50 disabled:opacity-50 dark:hover:bg-indigo-950/40',
+                        s.kind === 'guide'
+                          ? 'border-indigo-200 text-indigo-700 dark:border-indigo-900 dark:text-indigo-300'
+                          : 'border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300',
+                      )}
+                    >
+                      {s.kind === 'guide' ? <BookOpen className="h-3 w-3" /> : <BarChart3 className="h-3 w-3" />}
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {busy && (
               <div className="flex justify-start">
                 <div className="flex items-center gap-2 rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-muted-foreground">
