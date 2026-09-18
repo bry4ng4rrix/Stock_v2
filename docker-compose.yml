@@ -68,10 +68,10 @@ services:
       # passerelle docker0 (127.0.0.1 désignerait le conteneur lui-même).
       # Sert au rapprochement de fiches produit lors des transferts.
       OLLAMA_URL: "${OLLAMA_URL:-http://172.18.0.1:11434}"
-      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3:4b}"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:0.5b}"
       AI_PRODUCT_MATCHING_ENABLED: "${AI_PRODUCT_MATCHING_ENABLED:-True}"
       AI_ASSISTANT_ENABLED: "${AI_ASSISTANT_ENABLED:-True}"
-      OLLAMA_ASSISTANT_MODEL: "${OLLAMA_ASSISTANT_MODEL:-qwen3:4b}"
+      OLLAMA_ASSISTANT_MODEL: "${OLLAMA_ASSISTANT_MODEL:-qwen2.5:0.5b}"
       OLLAMA_ASSISTANT_TIMEOUT: "${OLLAMA_ASSISTANT_TIMEOUT:-120}"
       OLLAMA_ASSISTANT_NUM_CTX: "${OLLAMA_ASSISTANT_NUM_CTX:-8192}"
     command: daphne -b 0.0.0.0 -p 8000 Stock.asgi:application

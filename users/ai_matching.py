@@ -35,7 +35,7 @@ _TRANSFER_SUFFIX_RE = re.compile(r"-TR\d+.*$", re.IGNORECASE)
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 DEFAULT_URL = "http://172.17.0.1:11434"
-DEFAULT_MODEL = "qwen3:4b"
+DEFAULT_MODEL = "qwen2.5:0.5b"
 
 
 def _conf(name, default):

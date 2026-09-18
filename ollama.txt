@@ -396,3 +396,20 @@ D) Conclusion
         OLLAMA_ASSISTANT_TIMEOUT=600, et accepter des réponses en minutes.
      3. Sinon AI_ASSISTANT_ENABLED=False (la bulle affiche alors une erreur
         503 « désactivé » : le frontend ne masque pas encore la bulle).
+
+E) DÉCISION (18/09/2026, après-midi) : qwen2.5:0.5b PARTOUT
+   Choix de l'utilisateur : le modèle le plus rapide et le plus léger.
+   Modifié : Stock/settings.py (OLLAMA_MODEL), docker-compose.yml,
+   docker-compose.prod.yml, users/ai_matching.py (DEFAULT_MODEL),
+   users/assistant.py (repli). Le même modèle sert au rapprochement et à
+   l'assistant (piège 5-D). Conteneur backend recréé (docker compose up -d).
+   Mesuré avec la config réelle : 78 s à froid (chargement + prompt de
+   ~3 500 tokens, ensuite en cache 30 min), puis 26-32 s par réponse avec
+   outil. 0,58 Go en RAM.
+   users/assistant.py : _clean_reply retire le gras markdown et remplace « € »
+   par « Ar », consignes du prompt que ce modèle ignore. 33 tests OK.
+   Limites acceptées : questions sur le guide et actions multi-étapes peu
+   fiables (voir matrice 7-C). qwen3:1.7b et qwen2.5:1.5b retirés du disque ;
+   qwen3:4b (2,5 Go) laissé, inutilisé : `ollama rm qwen3:4b` si besoin.
+   OLLAMA_TIMEOUT=20 (rapprochement) reste court même pour 0.5b ; en cas de
+   dépassement le transfert retombe sur le rapprochement déterministe.

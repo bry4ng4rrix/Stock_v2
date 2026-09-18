@@ -600,7 +600,7 @@ def _ollama_chat(body, timeout):
 
 def _call_model(messages, tools, timeout):
     body = {
-        "model": _conf("OLLAMA_ASSISTANT_MODEL", _conf("OLLAMA_MODEL", "qwen3:4b")),
+        "model": _conf("OLLAMA_ASSISTANT_MODEL", _conf("OLLAMA_MODEL", "qwen2.5:0.5b")),
         "messages": messages,
         "tools": tools,
         "stream": False,
@@ -682,14 +682,22 @@ class AssistantUnavailable(Exception):
 
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+_MD_EMPHASIS = re.compile(r"(\*\*|__)(.+?)\1")
 
 
-def _strip_thinking(content):
-    """Retire un éventuel bloc de raisonnement que le modèle aurait laissé
-    dans le texte malgré `think: false` (bloc fermé, ou ouvert sans fin)."""
+def _clean_reply(content):
+    """Nettoie le texte du modèle avant affichage.
+
+    Retire un éventuel bloc de raisonnement laissé malgré `think: false`
+    (bloc fermé, ou ouvert sans fin), le gras markdown, et remplace le symbole
+    euro par « Ar » : les petits modèles (qwen2.5:0.5b) ignorent les consignes
+    « pas de markdown » et « montants en ariary » du prompt, et l'application
+    ne manipule que des ariary."""
     content = _THINK_BLOCK.sub("", content or "")
     if "<think>" in content:
         content = content.split("<think>", 1)[0]
+    content = _MD_EMPHASIS.sub(r"\2", content)
+    content = content.replace("€", "Ar")
     return content.strip()
 
 
@@ -782,7 +790,7 @@ def run_conversation(user, raw_messages, magasin_id=None):
         response = _call_model(messages, tools, timeout)
         message = (response or {}).get("message") or {}
         tool_calls = message.get("tool_calls") or []
-        reply = _strip_thinking(message.get("content"))
+        reply = _clean_reply(message.get("content"))
 
         if not tool_calls:
             break

@@ -266,3 +266,15 @@ class AssistantAPITestCase(APITestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["reply"], "Bonjour ! Que puis-je faire ?")
+
+    def test_markdown_bold_and_euro_are_cleaned_from_reply(self):
+        # qwen2.5:0.5b ignore « pas de markdown » et « montants en ariary ».
+        self.client.force_authenticate(user=self.admin)
+        reply = _model_reply(content="- **Strasse** : 14 unités, valeur 200000.0€.")
+        with patch.object(assistant, "_call_model", return_value=reply):
+            response = self.client.post(
+                "/api/users/assistant/chat/",
+                {"messages": [{"role": "user", "content": "stock ?"}]},
+                format="json",
+            )
+        self.assertEqual(response.data["reply"], "- Strasse : 14 unités, valeur 200000.0Ar.")

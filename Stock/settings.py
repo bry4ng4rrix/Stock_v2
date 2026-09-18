@@ -224,7 +224,14 @@ CSRF_TRUSTED_ORIGINS = _csrf_env.split() if _csrf_env else [
 # dont la passerelle est 172.18.0.1 ; vérifier avec
 # `docker network inspect stock_v2_default` si ça change un jour).
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://172.18.0.1:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
+# qwen2.5:0.5b : le seul modèle qui tienne dans la RAM de ce VPS (0,6 Go chargé
+# contre ~3,3 Go pour qwen3:4b, tué par l'OOM killer) et qui réponde en secondes
+# (~4 tok/s contre 1,5). Moins fiable qu'un 4b sur les consignes complexes,
+# mais le 4b n'est pas exploitable ici (mesures dans ollama.txt §7).
+# Garder le MÊME modèle pour le rapprochement et l'assistant : avec
+# OLLAMA_MAX_LOADED_MODELS=1, deux modèles se chasseraient de la RAM à chaque
+# alternance (rechargement à chaque fois).
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:0.5b")
 OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT", "20"))
 
 AI_PRODUCT_MATCHING_ENABLED = bool_env(os.environ.get("AI_PRODUCT_MATCHING_ENABLED", "True"), True)
@@ -244,8 +251,9 @@ AI_MATCH_TIME_BUDGET = float(os.environ.get("AI_MATCH_TIME_BUDGET", "45"))
 # stock/ventes et actions confirmées, toutes journalisées dans Movement.
 # Voir users/assistant.py.
 AI_ASSISTANT_ENABLED = bool_env(os.environ.get("AI_ASSISTANT_ENABLED", "True"), True)
-# Modèle dédié à l'assistant (par défaut le même que le rapprochement). Il
-# doit supporter l'appel d'outils ("tools") : qwen3 le fait, qwen2.5:0.5b aussi.
+# Modèle dédié à l'assistant (par défaut le même que le rapprochement, voir
+# ci-dessus). Il doit supporter l'appel d'outils ("tools") : qwen2.5 et qwen3
+# le font.
 OLLAMA_ASSISTANT_MODEL = os.environ.get("OLLAMA_ASSISTANT_MODEL", OLLAMA_MODEL)
 # Un tour de conversation peut enchaîner jusqu'à trois appels au modèle, et
 # sur CPU chacun prend des dizaines de secondes : timeout par appel généreux.
@@ -254,5 +262,5 @@ OLLAMA_ASSISTANT_TIMEOUT = float(os.environ.get("OLLAMA_ASSISTANT_TIMEOUT", "120
 # les schémas des 11 outils (~1 600) plus un extrait du guide (~600) frôlent
 # les 4 096 par défaut : au-delà, Ollama tronque le début — le prompt système —
 # sans erreur. 8 192 laisse la place à la conversation. Coût : de la RAM pour
-# le cache KV, ~0,5 Go de plus sur qwen3:4b.
+# le cache KV (négligeable sur qwen2.5:0.5b, ~1 Go sur qwen3:4b).
 OLLAMA_ASSISTANT_NUM_CTX = int(os.environ.get("OLLAMA_ASSISTANT_NUM_CTX", "8192"))
